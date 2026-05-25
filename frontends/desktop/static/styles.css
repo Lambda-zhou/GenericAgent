@@ -92,6 +92,7 @@
   --fold-turn-bg:transparent;
   --fold-retry-border:var(--line-soft);
   --fold-retry-bg:transparent;
+  --chat-max-w:clamp(600px, 75%, 1000px);
 }
 
 /* —— 主题色板（素色：仅 accent 浅底）—— */
@@ -565,7 +566,7 @@ html[data-appearance="dark"] .swatch[data-theme="8"].sel::after{
 .conv-empty{ color:var(--muted2); font-size:12px; }
 
 /* 消息流 */
-.msgs{ width:100%; max-width:760px; margin:0 auto; display:flex; flex-direction:column; gap:14px; }
+.msgs{ width:100%; max-width:var(--chat-max-w); margin:0 auto; display:flex; flex-direction:column; gap:14px; }
 .msg{ display:flex; flex-wrap:wrap; }
 .msg.user{ justify-content:flex-end; }
 .msg.assistant,.msg.error{ justify-content:flex-start; }
@@ -605,7 +606,7 @@ html[data-appearance="dark"] .swatch[data-theme="8"].sel::after{
 .run-state.busy .dot{ animation:blink 1s steps(2) infinite; }
 
 /* 预设功能卡片（现在嵌在聊天空状态）*/
-.chat-start{ width:100%; max-width:560px; }
+.chat-start{ width:100%; max-width:var(--chat-max-w); }
 html[data-boot-has-sessions] .chat-start{ display:none !important; }
 .feature-head{ text-align:center; margin-bottom:22px; }
 .feature-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:12px; }
