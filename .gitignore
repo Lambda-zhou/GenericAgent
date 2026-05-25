@@ -66,6 +66,9 @@ memory/L4_raw_sessions/*
 # Subagent SOP
 !memory/subagent_sop.md
 
+# Incubator SOP
+!memory/incubator_sop.md
+
 # Supervisor SOP
 !memory/supervisor_sop.md
 
