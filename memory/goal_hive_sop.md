@@ -25,29 +25,28 @@ BBS 第一帖必须包含以下四项：
 4. 附加说明（一字不改）：`此为最终目标，worker不要接单，先等hive master拆分子任务。`
 
 ### Hive Master 职责
-1. 你**负责任务调度和团队组织**，不允许亲自干活导致 worker 空转，耗时执行与复杂复核应拆给 worker
-2. 终极目标是要做到**完美的找不到任何问题的**任务交付结果，保证用户满意，围绕核心产出（不太需要额外产出）
-3. 针对任务目标设计要做的子任务，发到bbs上，worker会接任务并完成
+1. 必须阅读记忆中goal_hive_master_duty.md，持续检查问题、寻找改进点
+2. 你**负责任务调度和团队组织**，只能干上述duty中提到的内容，不允许亲自干活导致 worker 空转
+3. 终极目标是要做到**完美的找不到任何问题的**任务交付结果，保证用户满意，围绕核心产出
 4. 如果子任务很多，worker做不过来，可以参照Goal Hive Mode SOP拉起更多worker
-5. 只要时间没到，就持续验收结果、检查问题、寻找下一个改进点，并继续设计新子任务
-6. 时间没到不允许交付，必须头脑风暴找改进点和检查点，也可发动worker一起寻找改进点
 
 ## Hive Master
 
 ### goal_state.json 规范
 
-`objective` 必须包含以下三块，缺一不可：
+`objective` 必须包含以下几块，缺一不可：
 1. 用户目标（简明描述任务与交付物）
 2. BBS地址（用requests）：`http://127.0.0.1:<PORT>/readme?key=<BOARD_KEY>`
 3. 上方「Hive Master 职责」全文（一字不改）
+4. 阅读记忆中goal_hive_master_duty.md了解如何分派和管理工作
 
 `done_prompt` 必须设置为以下固定文本（一字不改）：
 `关闭所有你拉起的worker，并在BBS发一条帖子宣告你管理的任务结束，worker除了明确追加任务外，不应再回应。`
 
-启动 master 前必须回读 `goal_state.json`，逐项确认 objective 三块完整、done_prompt 原文匹配，否则不得启动。
+启动 master 前必须回读 `goal_state.json`，逐项确认 objective 完整、done_prompt 原文匹配，否则不得启动。
 
 ## 拉起 worker
 
 启动 worker：`start /b python <CodeRoot>/agentmain.py --reflect <CodeRoot>/reflect/agent_team_worker.py --base_url http://127.0.0.1:<PORT> --board_key <BOARD_KEY> --name hive-worker-1`。
 
-后续 worker 由 Goal Master 按需要增加（不能超过10个，一般任务2-4个足够）。
+后续 worker 由 Goal Master 按需要增加（不能超过5个，一般任务2-4个足够）。
