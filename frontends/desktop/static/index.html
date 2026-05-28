@@ -289,7 +289,7 @@
     <aside class="rightpanel" id="rightpanel">
       <div class="search">
         <span class="search-ic" data-ga-icon="magnifyingGlass"></span>
-        <input data-i18n-ph="search.placeholder" placeholder="">
+        <input data-i18n-ph="search.placeholder" placeholder="" maxlength="50">
       </div>
       <button class="new-conv">
         <span data-ga-icon="plus"></span>
@@ -345,20 +345,20 @@
       </div>
       <div class="modal-body model-form-body">
         <form id="add-model-form" class="model-form" autocomplete="off">
-          <label><span class="field-label"><span data-i18n="model.model"></span><span class="field-req" aria-hidden="true">*</span></span><input name="model" required data-i18n-ph="model.modelPh"><span class="field-hint" data-i18n="model.modelHint"></span></label>
-          <label id="model-apikey-label"><span class="field-label"><span data-i18n="model.apikey"></span><span class="field-req" aria-hidden="true">*</span></span><input name="apikey" type="password" data-i18n-ph="model.apikeyPh" id="model-apikey-input"></label>
-          <label><span class="field-label"><span data-i18n="model.apibase"></span><span class="field-req" aria-hidden="true">*</span></span><input name="apibase" required data-i18n-ph="model.apibasePh"></label>
+          <label><span class="field-label"><span data-i18n="model.model"></span><span class="field-req" aria-hidden="true">*</span></span><input name="model" required data-i18n-ph="model.modelPh" maxlength="50"><span class="field-hint" data-i18n="model.modelHint"></span></label>
+          <label id="model-apikey-label"><span class="field-label"><span data-i18n="model.apikey"></span><span class="field-req" aria-hidden="true">*</span></span><input name="apikey" type="password" data-i18n-ph="model.apikeyPh" id="model-apikey-input" maxlength="200"></label>
+          <label><span class="field-label"><span data-i18n="model.apibase"></span><span class="field-req" aria-hidden="true">*</span></span><input name="apibase" required data-i18n-ph="model.apibasePh" maxlength="200"></label>
           <div class="model-form-field"><span class="field-label"><span data-i18n="model.protocol"></span><span class="field-req" aria-hidden="true">*</span></span>
             <div class="seg-group" role="radiogroup">
               <label class="seg-opt"><input type="radio" name="protocol" value="oai" required><span data-i18n="model.protocolOai"></span></label>
               <label class="seg-opt"><input type="radio" name="protocol" value="claude" required><span data-i18n="model.protocolClaude"></span></label>
             </div>
           </div>
-          <label><span data-i18n="model.name"></span><input name="name" data-i18n-ph="model.namePh" data-optional-ph></label>
+          <label><span data-i18n="model.name"></span><input name="name" data-i18n-ph="model.namePh" data-optional-ph maxlength="50"></label>
           <div class="model-form-row">
-            <label class="model-form-mini"><span data-i18n="model.retries"></span><input name="max_retries" type="number" min="1" value="5"></label>
-            <label class="model-form-mini"><span data-i18n="model.connTimeout"></span><input name="connect_timeout" type="number" min="1" value="15"></label>
-            <label class="model-form-mini"><span data-i18n="model.readTimeout"></span><input name="read_timeout" type="number" min="5" value="300"></label>
+            <label class="model-form-mini"><span data-i18n="model.retries"></span><input name="max_retries" type="text" inputmode="numeric" pattern="[0-9]*" min="1" max="20" value="5"></label>
+            <label class="model-form-mini"><span data-i18n="model.connTimeout"></span><input name="connect_timeout" type="text" inputmode="numeric" pattern="[0-9]*" min="1" max="300" value="15"></label>
+            <label class="model-form-mini"><span data-i18n="model.readTimeout"></span><input name="read_timeout" type="text" inputmode="numeric" pattern="[0-9]*" min="5" max="3600" value="300"></label>
           </div>
           <p class="model-form-err" id="add-model-err" hidden></p>
           <div class="model-form-actions">
@@ -381,8 +381,8 @@
         </button>
       </div>
       <div class="modal-body cp-body">
-        <input class="cp-input" id="cp-title" type="text" data-i18n-ph="customPreset.titlePh" placeholder="">
-        <textarea class="cp-textarea" id="cp-prompt" rows="6" data-i18n-ph="customPreset.promptPh" placeholder=""></textarea>
+        <input class="cp-input" id="cp-title" type="text" data-i18n-ph="customPreset.titlePh" placeholder="" maxlength="50">
+        <textarea class="cp-textarea" id="cp-prompt" rows="6" data-i18n-ph="customPreset.promptPh" placeholder="" maxlength="10000"></textarea>
         <div class="cp-error" id="cp-error" hidden></div>
         <div class="cp-actions">
           <button class="cp-btn" data-close data-i18n="common.cancel" type="button"></button>
@@ -419,7 +419,7 @@
         </button>
       </div>
       <div class="modal-body modal-body-inset chan-config-body">
-        <textarea id="chan-config-editor" class="mykey-editor" spellcheck="false"></textarea>
+        <textarea id="chan-config-editor" class="mykey-editor" spellcheck="false" maxlength="20000"></textarea>
         <div class="chan-config-foot">
           <button type="button" class="chan-config-save" id="chan-config-save" data-i18n="common.save"></button>
         </div>
@@ -517,7 +517,7 @@
 <!-- highlight.js -->
 <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js" crossorigin="anonymous"></script>
 <script src="phosphor-icons.js"></script>
-<script src="app.js?v=55"></script>
+<script src="app.js?v=63"></script>
 <script src="annot.js"></script><!-- DEV 脚手架，可删 -->
 </body>
 </html>

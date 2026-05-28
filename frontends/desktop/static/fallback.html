@@ -87,5 +87,46 @@ async function doStart() {
 pyInput.addEventListener('keydown', e=>{ if(e.key==='Enter') dirInput.focus(); });
 dirInput.addEventListener('keydown', e=>{ if(e.key==='Enter') doStart(); });
 </script>
+
+<script>
+// Input length limit (300 chars) — in separate script to work even without Tauri
+const MAX_LEN = 300;
+const _pyInput = document.getElementById('pypath');
+const _dirInput = document.getElementById('projdir');
+[_pyInput, _dirInput].forEach(el => {
+  if (!el) return;
+  const hint = document.createElement('span');
+  hint.style.cssText = 'color:#dc2626;font-size:.75rem;display:none;margin-top:2px';
+  el.parentNode.appendChild(hint);
+
+  function checkLimit() {
+    if (el.value.length > MAX_LEN) {
+      el.value = el.value.slice(0, MAX_LEN);
+    }
+    if (el.value.length >= MAX_LEN) {
+      hint.textContent = 'Character limit reached (' + MAX_LEN + ') / 已达字数上限（' + MAX_LEN + '）';
+      hint.style.display = 'block';
+    } else {
+      hint.style.display = 'none';
+    }
+  }
+
+  // Intercept paste: only take first MAX_LEN chars from clipboard
+  el.addEventListener('paste', e => {
+    e.preventDefault();
+    const text = (e.clipboardData || window.clipboardData).getData('text') || '';
+    const start = el.selectionStart;
+    const end = el.selectionEnd;
+    const remaining = MAX_LEN - el.value.length + (end - start);
+    const insert = text.slice(0, Math.max(0, remaining));
+    el.value = el.value.slice(0, start) + insert + el.value.slice(end);
+    el.setSelectionRange(start + insert.length, start + insert.length);
+    checkLimit();
+  });
+
+  // Fallback: keyboard input beyond limit
+  el.addEventListener('input', checkLimit);
+});
+</script>
 </body>
 </html>

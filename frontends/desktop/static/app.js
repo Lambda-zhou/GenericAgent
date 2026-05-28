@@ -309,6 +309,7 @@ const I18N = {
     'upload.button': '上传文件',
     'upload.tooLarge': '文件过大或数量超限', 'upload.empty': '跳过空文件',
     'upload.failed': '上传失败',
+    'err.charLimit': '已达字数上限（{n}），发送时将自动截断', 'err.numMax': '不能超过 {n}',
     'file.openFailed': '无法打开文件',
     'file.kindGeneric': '文件',
     'file.kindDoc': '文档',
@@ -453,6 +454,7 @@ const I18N = {
     'upload.button': 'Upload file',
     'upload.tooLarge': 'File too large or limit reached', 'upload.empty': 'Skipped empty file',
     'upload.failed': 'Upload failed',
+    'err.charLimit': 'Character limit reached ({n}), text will be truncated on send', 'err.numMax': 'Cannot exceed {n}',
     'file.openFailed': 'Cannot open file',
     'file.kindGeneric': 'File',
     'file.kindDoc': 'Document',
@@ -773,7 +775,10 @@ nav.addEventListener('click', (e) => {
 
 /* ═══════════════ 弹窗开关 ═══════════════ */
 const openModal = (id) => { const m = document.getElementById(id); if (m) m.hidden = false; };
-const closeModals = () => document.querySelectorAll('.modal').forEach(m => m.hidden = true);
+const closeModals = () => document.querySelectorAll('.modal').forEach(m => {
+  m.hidden = true;
+  m.querySelectorAll('.field-limit-hint').forEach(h => h.style.display = 'none');
+});
 const bindClick = (id, fn) => { const el = document.getElementById(id); if (el) el.addEventListener('click', fn); };
 bindClick('add-model-btn', (e) => {
   e.stopPropagation();
@@ -782,7 +787,12 @@ bindClick('add-model-btn', (e) => {
 bindClick('settings-btn',  (e) => { e.stopPropagation(); openSettings(); });
 bindClick('preset-btn',    (e) => { e.stopPropagation(); openModal('preset-modal'); });
 document.querySelectorAll('.modal').forEach(m =>
-  m.addEventListener('click', (e) => { if (e.target.closest('[data-close]')) m.hidden = true; }));
+  m.addEventListener('click', (e) => {
+    if (e.target.closest('[data-close]')) {
+      m.hidden = true;
+      m.querySelectorAll('.field-limit-hint').forEach(h => h.style.display = 'none');
+    }
+  }));
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModals(); });
 
 /* ═══════════════ Markdown ═══════════════ */
@@ -1781,8 +1791,10 @@ convMenu.addEventListener('click', (e) => {
     const oldTitle = sess.title || '';
     const inp = document.createElement('input');
     inp.className = 'ci-rename-input';
+    inp.maxLength = 50;
     inp.value = oldTitle;
     titleEl.replaceWith(inp);
+    bindToastLimit(inp);
     inp.focus();
     inp.select();
     const finish = (save) => {
@@ -2013,12 +2025,16 @@ async function cancelPrompt() {
 /* ═══════════════ 输入区 / slash / 预设 ═══════════════ */
 async function submitInput() {
   if (_submitInFlight) return;
-  const text = composerText('chat');
+  let text = composerText('chat');
   if (!text.trim()) return;
   if (text.trim().startsWith('/')) {
     inputEl.innerHTML = '';
     handleSlash(text.trim());
     return;
+  }
+  if (text.length > 20000) {
+    text = text.slice(0, 20000);
+    showToast(t('err.charLimit').replace('{n}', 20000), 'warn');
   }
   _submitInFlight = true;
   setComposerLocked(true);
@@ -2669,8 +2685,18 @@ function bindComposerUpload(ctx) {
     if (files.length) { e.preventDefault(); addFiles(files); return; }
     // 富文本粘贴 → 强制纯文本（contenteditable 默认会粘 HTML，会污染输入框）
     e.preventDefault();
-    const text = cd ? cd.getData('text/plain') : '';
-    if (text) document.execCommand('insertText', false, text);
+    const text = cd ? cd.getData('text/plain').replace(/\r\n/g, '\n') : '';
+    if (!text) return;
+    // Hard-limit: only insert what fits within maxLen
+    const maxLen = 20000;
+    const curLen = cfg.input.textContent.length;
+    const sel = window.getSelection();
+    const selLen = (sel.rangeCount && cfg.input.contains(sel.anchorNode)) ? sel.toString().length : 0;
+    const remaining = maxLen - curLen + selLen;
+    if (remaining <= 0) { showChanToast(t('err.charLimit').replace('{n}', maxLen), '', 'err'); return; }
+    const insert = text.slice(0, remaining);
+    document.execCommand('insertText', false, insert);
+    if (text.length > remaining) showChanToast(t('err.charLimit').replace('{n}', maxLen), '', 'err');
   });
   cfg.input?.addEventListener('input', () => {
     activeFileComposer = ctx;
@@ -3232,6 +3258,178 @@ function showChanToast(title, detail, kind) {
     setTimeout(() => el.remove(), 300);
   }, 3000);
 }
+
+/* ── Input length validation ── */
+(function initInputLimits() {
+  let _toastTimer = null;
+
+  function limitToast(maxLen) {
+    clearTimeout(_toastTimer);
+    _toastTimer = setTimeout(() => {
+      const msg = t('err.charLimit').replace('{n}', maxLen);
+      showChanToast(msg, '', 'err');
+    }, 300);
+  }
+
+  // Toast-based: for elements with maxLength attribute (input/textarea)
+  function bindToastLimit(el) {
+    if (!el || !el.maxLength || el.maxLength < 0) return;
+    el.addEventListener('input', () => {
+      if (el.value.length >= el.maxLength) limitToast(el.maxLength);
+    });
+  }
+
+  // Toast-based: for contenteditable elements (no native maxLength)
+  // Note: we only warn on input, not hard-truncate, because truncating innerHTML
+  // would destroy embedded chips, cursor position, and break IME composition.
+  // Actual truncation happens at send time in submitInput().
+  function bindContentEditableLimit(el, maxLen) {
+    if (!el) return;
+    let composing = false;
+    el.addEventListener('compositionstart', () => { composing = true; });
+    el.addEventListener('compositionend', () => {
+      composing = false;
+      trimExcess();
+    });
+    // Layer 1: block non-IME input when at capacity
+    el.addEventListener('beforeinput', (e) => {
+      if (composing) return; // let IME through, trim after compositionend
+      if (e.inputType === 'historyUndo' || e.inputType === 'historyRedo') return;
+      if (e.inputType && e.inputType.startsWith('delete')) return;
+      if (el.textContent.length >= maxLen) {
+        e.preventDefault();
+        limitToast(maxLen);
+      }
+    });
+    // Layer 2: after IME commits, trim excess from last text node
+    function trimExcess() {
+      const cur = el.textContent.length;
+      if (cur <= maxLen) return;
+      const excess = cur - maxLen;
+      // Walk text nodes in reverse to trim from the end (skip chip internals)
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+      const textNodes = [];
+      while (walker.nextNode()) textNodes.push(walker.currentNode);
+      if (!textNodes.length) return;
+      let toRemove = excess;
+      for (let i = textNodes.length - 1; i >= 0 && toRemove > 0; i--) {
+        const node = textNodes[i];
+        if (node.nodeValue.length <= toRemove) {
+          toRemove -= node.nodeValue.length;
+          node.nodeValue = '';
+        } else {
+          node.nodeValue = node.nodeValue.slice(0, node.nodeValue.length - toRemove);
+          toRemove = 0;
+        }
+      }
+      limitToast(maxLen);
+    }
+  }
+
+  // Per-field inline hint: creates a small red span right after the input
+  function bindFieldInlineLimit(el) {
+    if (!el || !el.maxLength || el.maxLength < 0) return;
+    const hint = document.createElement('span');
+    hint.className = 'field-limit-hint';
+    hint.style.cssText = 'color:var(--err,#dc2626);font-size:.75rem;display:none;margin-top:2px';
+    // Insert hint right after the input element
+    el.insertAdjacentElement('afterend', hint);
+    el.addEventListener('input', () => {
+      if (el.value.length >= el.maxLength) {
+        hint.textContent = t('err.charLimit').replace('{n}', el.maxLength);
+        hint.style.display = 'block';
+      } else {
+        hint.style.display = 'none';
+      }
+    });
+  }
+
+  window.bindFieldInlineLimit = bindFieldInlineLimit;
+  window.bindToastLimit = bindToastLimit;
+
+  // Number field: clamp to max on blur, no red text; block non-integer chars
+  function bindNumberClamp(el) {
+    if (!el || !el.max) return;
+    const max = Number(el.max);
+    if (!max) return;
+    // Block all non-digit keys (allow navigation/editing keys)
+    el.addEventListener('keydown', (e) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return; // allow shortcuts
+      if (['Backspace','Delete','Tab','ArrowLeft','ArrowRight','Home','End'].includes(e.key)) return;
+      if (e.key.length === 1 && !/[0-9]/.test(e.key)) e.preventDefault();
+    });
+    el.addEventListener('input', () => {
+      // Strip non-digit chars (IME can bypass keydown)
+      const cleaned = el.value.replace(/[^0-9]/g, '');
+      if (cleaned !== el.value) el.value = cleaned;
+      const v = Number(el.value);
+      if (el.value !== '' && v > max) el.value = max;
+    });
+  }
+
+  // Shared inline error group (for preset form)
+  function createInlineGroup(errEl) {
+    const tracked = new Set();
+    function check(el) {
+      if (el.value.length >= el.maxLength) {
+        tracked.add(el);
+      } else {
+        tracked.delete(el);
+      }
+      if (tracked.size > 0) {
+        errEl.textContent = t('err.charLimit').replace('{n}', el.maxLength);
+        errEl.hidden = false;
+      } else {
+        errEl.hidden = true;
+      }
+    }
+    return {
+      addText(el) {
+        if (!el || !el.maxLength || el.maxLength < 0) return;
+        el.addEventListener('input', () => check(el));
+      }
+    };
+  }
+
+  // Wait for DOM ready
+  function setup() {
+    // Contenteditable inputs (chat + collab)
+    const chatInput = document.querySelector('.input[contenteditable][data-i18n-ph="composer.placeholder"]');
+    const collabInput = document.getElementById('collab-input');
+    bindContentEditableLimit(chatInput, 20000);
+    bindContentEditableLimit(collabInput, 20000);
+
+    // Toast targets (standard inputs/textareas with maxLength)
+    const searchInput = document.querySelector('.search input');
+    const mykeyEditor = document.getElementById('chan-config-editor');
+    [searchInput, mykeyEditor].forEach(bindToastLimit);
+
+    // Model form: per-field inline hints
+    const form = document.getElementById('add-model-form');
+    if (form) {
+      ['model', 'apikey', 'apibase', 'name'].forEach(name => {
+        bindFieldInlineLimit(form.querySelector(`[name="${name}"]`));
+      });
+      ['max_retries', 'connect_timeout', 'read_timeout'].forEach(name => {
+        bindNumberClamp(form.querySelector(`[name="${name}"]`));
+      });
+    }
+
+    // Preset form: shared inline error (user confirmed OK)
+    const cpErr = document.getElementById('cp-error');
+    if (cpErr) {
+      const group = createInlineGroup(cpErr);
+      group.addText(document.getElementById('cp-title'));
+      group.addText(document.getElementById('cp-prompt'));
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', setup);
+  } else {
+    setup();
+  }
+})();
 
 function channelDisplayName(ch) {
   const file = (ch.name || ch.id || '').split('/').pop();

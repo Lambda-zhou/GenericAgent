@@ -415,6 +415,46 @@
         send();
       }
     });
+
+    // Input length limit (10000 chars)
+    const MAX_LEN = 10000;
+    let limitToast = null;
+
+    function showLimitToast(msg) {
+      if (limitToast) return; // already showing, don't spam
+      limitToast = document.createElement('div');
+      limitToast.textContent = msg;
+      limitToast.style.cssText = 'position:fixed;top:24px;left:50%;transform:translateX(-50%);background:#dc2626;color:#fff;padding:10px 24px;border-radius:8px;font-size:14px;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,.15);transition:opacity .3s';
+      document.body.appendChild(limitToast);
+      setTimeout(() => {
+        if (limitToast) { limitToast.style.opacity = '0'; }
+        setTimeout(() => { if (limitToast) { limitToast.remove(); limitToast = null; } }, 300);
+      }, 3000);
+    }
+
+    function checkLimit() {
+      if (inputEl.value.length > MAX_LEN) {
+        inputEl.value = inputEl.value.slice(0, MAX_LEN);
+        showLimitToast('已达字数上限（' + MAX_LEN + '）');
+      }
+    }
+
+    inputEl.addEventListener('paste', e => {
+      e.preventDefault();
+      const text = (e.clipboardData || window.clipboardData).getData('text') || '';
+      const remaining = MAX_LEN - inputEl.value.length + (inputEl.selectionEnd - inputEl.selectionStart);
+      const insert = text.slice(0, Math.max(0, remaining));
+      const start = inputEl.selectionStart;
+      const end = inputEl.selectionEnd;
+      inputEl.value = inputEl.value.slice(0, start) + insert + inputEl.value.slice(end);
+      inputEl.setSelectionRange(start + insert.length, start + insert.length);
+      if (text.length > remaining) {
+        showLimitToast('已达字数上限（' + MAX_LEN + '）');
+      }
+    });
+
+    inputEl.addEventListener('input', checkLimit);
+
     connect();
   </script>
 </body>
