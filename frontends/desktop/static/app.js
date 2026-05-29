@@ -2863,7 +2863,7 @@ function tokSaveHistory(h) {
   _tokHistory = h;
   fetch(`http://${location.hostname}:14168/token-history`, {
     method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({history:h, snap:_tokLastSnap})
+    body: JSON.stringify({history:h, snap:_tokLastSnap, conductorHist:_condHist, conductorLast:_condLast})
   }).catch(()=>{});
 }
 
@@ -2876,6 +2876,8 @@ async function tokPollBridge() {
       const stored = await bridgeFetch('/token-history');
       if (stored.history?.length) _tokHistory = stored.history;
       if (stored.snap) _tokLastSnap = stored.snap;
+      if (stored.conductorHist) _condHist = stored.conductorHist;
+      if (stored.conductorLast) _condLast = stored.conductorLast;
     }
     const data = await bridgeFetch('/token-stats');
     const history = tokLoadHistory();
@@ -2957,26 +2959,54 @@ function tokRenderTable(records) {
 async function loadTokenPage(){await tokPollBridge();const f=tokGetFiltered();const all=tokLoadHistory();tokRenderStats(f,all);tokRenderTable(f);await tokRenderConductorRow();}
 
 let _conductorRowGen = 0;
+const _COND_HIST_KEY = 'conductor_token_hist';
+const _COND_LAST_KEY = 'conductor_token_last';
+const _condZero = {input:0,output:0,cacheCreate:0,cacheRead:0,cost:0};
+let _condHist = null, _condLast = null;
+function _condLoadHist() { return _condHist || {..._condZero}; }
+function _condLoadLast() { return _condLast; }
+function _condSave(hist, last) {
+  _condHist = hist; _condLast = last;
+  fetch(`http://${location.hostname}:14168/token-history`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({history:_tokHistory, snap:_tokLastSnap, conductorHist:hist, conductorLast:last})
+  }).catch(()=>{});
+}
+
 async function tokRenderConductorRow() {
   if (!tokTbody) return;
   const gen = ++_conductorRowGen;
   tokTbody.querySelectorAll('.tok-row-conductor').forEach(el => el.remove());
+  let curIn = 0, curOut = 0, curCc = 0, curCr = 0, curCost = 0;
   try {
     const data = await (await fetch(`http://${location.hostname}:8900/token-stats`)).json();
     if (gen !== _conductorRowGen) return;
     tokTbody.querySelectorAll('.tok-row-conductor').forEach(el => el.remove());
     const recs = (data.records || []).filter(r => r.thread === 'conductor-agent' || r.thread.startsWith('subagent-'));
-    if (!recs.length) return;
-    let totalIn = 0, totalOut = 0, totalCc = 0, totalCr = 0, cost = 0;
     for (const r of recs) {
-      totalIn += r.input || 0; totalOut += r.output || 0; totalCc += r.cacheCreate || 0; totalCr += r.cacheRead || 0;
-      cost += parseFloat(estCost(r.input || 0, r.output || 0, r.model || '', r.cacheRead || 0, r.cacheCreate || 0));
+      curIn += r.input || 0; curOut += r.output || 0; curCc += r.cacheCreate || 0; curCr += r.cacheRead || 0;
+      curCost += parseFloat(estCost(r.input || 0, r.output || 0, r.model || '', r.cacheRead || 0, r.cacheCreate || 0));
     }
-    const tr = document.createElement('tr'); tr.className = 'tok-row-session tok-row-conductor';
-    tr.title = 'Conductor 消耗的 token 不计入累计 token 中';
-    tr.innerHTML = `<td>🎛 Conductor (${recs.length} threads)</td><td>${fmtTok(totalIn)}</td><td>${fmtTok(totalOut)}</td><td>${fmtTok(totalCc)}</td><td>${fmtTok(totalCr)}</td><td>¥${cost.toFixed(2)}</td>`;
-    tokTbody.insertBefore(tr, tokTbody.firstChild);
   } catch (_) {}
+  if (gen !== _conductorRowGen) return;
+  // Detect conductor restart: if current totals < last seen, accumulate last into history
+  const hist = _condLoadHist();
+  const last = _condLoadLast();
+  if (last && (curIn < last.input || curOut < last.output)) {
+    hist.input += last.input; hist.output += last.output; hist.cacheCreate += last.cacheCreate; hist.cacheRead += last.cacheRead; hist.cost += last.cost;
+  }
+  const newLast = (curIn > 0 || curOut > 0) ? {input:curIn, output:curOut, cacheCreate:curCc, cacheRead:curCr, cost:curCost} : last;
+  _condSave(hist, newLast);
+  const tip = 'Conductor 消耗的 token 不计入累计 token 中';
+  // Row 1: historical total
+  const tr1 = document.createElement('tr'); tr1.className = 'tok-row-session tok-row-conductor'; tr1.title = tip;
+  const hIn = hist.input + curIn, hOut = hist.output + curOut, hCc = hist.cacheCreate + curCc, hCr = hist.cacheRead + curCr, hCost = hist.cost + curCost;
+  tr1.innerHTML = `<td>🎛 Conductor 累计</td><td>${fmtTok(hIn)}</td><td>${fmtTok(hOut)}</td><td>${fmtTok(hCc)}</td><td>${fmtTok(hCr)}</td><td>¥${hCost.toFixed(2)}</td>`;
+  // Row 2: current session
+  const tr2 = document.createElement('tr'); tr2.className = 'tok-row-session tok-row-conductor'; tr2.title = tip;
+  tr2.innerHTML = `<td>🎛 Conductor 本次</td><td>${fmtTok(curIn)}</td><td>${fmtTok(curOut)}</td><td>${fmtTok(curCc)}</td><td>${fmtTok(curCr)}</td><td>¥${curCost.toFixed(2)}</td>`;
+  tokTbody.insertBefore(tr2, tokTbody.firstChild);
+  tokTbody.insertBefore(tr1, tokTbody.firstChild);
 }
 
 /* ─── Conductor token tab (disabled — pending time tracking) ─── */
