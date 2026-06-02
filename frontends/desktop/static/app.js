@@ -11,7 +11,7 @@ const BRIDGE_PORT = 14168;
 const CONDUCTOR_PORT = 8900;
 const BRIDGE_ORIGIN = `${location.protocol}//${location.hostname}:${BRIDGE_PORT}`;
 const BRIDGE_WS_ORIGIN = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.hostname}:${BRIDGE_PORT}`;
-const CONDUCTOR_ORIGIN = `http://${location.hostname}:${CONDUCTOR_PORT}`;
+const CONDUCTOR_ORIGIN = `${location.protocol}//${location.hostname}:${CONDUCTOR_PORT}`;
 const CONDUCTOR_WS_ORIGIN = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.hostname}:${CONDUCTOR_PORT}`;
 
 /* ═══════════════ 进程状态 store ═══════════════ */
