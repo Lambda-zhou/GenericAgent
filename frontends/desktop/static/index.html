@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <title>GenericAgent</title>
 <link rel="stylesheet" href="assets/fonts/fonts.css">
-<link rel="stylesheet" href="styles.css?v=117">
+<link rel="stylesheet" href="styles.css?v=124">
 <!-- KaTeX: LaTeX 公式渲染 -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" crossorigin="anonymous">
 <!-- highlight.js: 代码高亮 -->
@@ -111,6 +111,8 @@
               <span data-ga-icon="caretRight"></span>
             </button>
           </div>
+          <div class="chat-shell">
+          <div class="chat-panel">
           <div class="msg-area">
             <div class="chat-start">
               <div class="feature-head">
@@ -118,6 +120,10 @@
                 <div class="page-sub" data-i18n="chat.startSub"></div>
               </div>
               <div class="feature-grid"></div>
+            </div>
+            <div class="session-loading" id="session-loading" hidden aria-live="polite">
+              <span class="ga-spin" aria-hidden="true"></span>
+              <span data-i18n="chat.sessionLoading"></span>
             </div>
             <div class="msg-loading" id="msg-loading" hidden aria-live="polite">
               <span class="ga-spin" aria-hidden="true"></span>
@@ -158,6 +164,8 @@
             <div class="ga-menu" id="model-menu" hidden></div>
             <input type="file" id="chat-file-input" multiple hidden>
             </div>
+          </div>
+          </div>
           </div>
         </section>
 
@@ -358,11 +366,13 @@
     <!-- ④ 右侧会话面板 -->
     <div class="rp-resize" id="rp-resize"></div>
     <aside class="rightpanel" id="rightpanel">
-      <div class="search">
-        <span class="search-ic" data-ga-icon="magnifyingGlass"></span>
-        <input data-i18n-ph="search.placeholder" placeholder="" maxlength="50">
+      <div class="rp-head">
+        <div class="search">
+          <span class="search-ic" data-ga-icon="magnifyingGlass"></span>
+          <input data-i18n-ph="search.placeholder" placeholder="" maxlength="50">
+        </div>
       </div>
-      <button class="new-conv">
+      <button type="button" class="new-conv">
         <span data-ga-icon="plus"></span>
         <span data-i18n="conv.new"></span>
       </button>
@@ -588,6 +598,6 @@
 <!-- highlight.js -->
 <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js" crossorigin="anonymous"></script>
 <script src="phosphor-icons.js"></script>
-<script src="app.js?v=159"></script>
+<script src="app.js?v=161"></script>
 </body>
 </html>

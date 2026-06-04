@@ -337,6 +337,7 @@ const I18N = {
     'err.interruptTimeout': '等待上一轮停止超时，请稍后再试',
     'sys.interruptPrev.hint': '已停止上一轮，正在处理新消息',
     'chat.interrupting': '正在停止上一轮…',
+    'chat.sessionLoading': '正在加载会话…',
     'sys.stopRequested': '已请求停止',
     'slash.help': '可用命令：\n/new 新会话  /clear 清屏  /stop 停止  /settings 设置',
     'slash.unknown': '未知命令',
@@ -489,6 +490,7 @@ const I18N = {
     'err.interruptTimeout': 'Timed out waiting for the previous reply to stop — try again',
     'sys.interruptPrev.hint': 'Previous reply stopped — processing new message',
     'chat.interrupting': 'Stopping previous reply…',
+    'chat.sessionLoading': 'Loading conversation…',
     'sys.stopRequested': 'Stop requested',
     'slash.help': 'Commands:\n/new new chat  /clear clear  /stop stop  /settings settings',
     'slash.unknown': 'Unknown command',
@@ -1518,6 +1520,7 @@ const sendBtn    = document.getElementById('send-btn');
 const planBarEl = document.getElementById('plan-bar');
 const composerEl = document.getElementById('chat-composer');
 const msgLoading = document.getElementById('msg-loading');
+const sessionLoadingEl = document.getElementById('session-loading');
 const MIN_MSG_LOADING_MS = 450;
 const PLAN_LOST_GRACE_MS = 1500;  // tuiapp_v2._PLAN_LOST_GRACE_SEC
 const PLAN_COMPLETE_GRACE_MS = 3000;  // tuiapp_v2._PLAN_GRACE_SEC
@@ -2442,6 +2445,10 @@ async function newSession() {
   saveSessions();
   renderSessionList();
 }
+function sessionNeedsHydrate(sess) {
+  return !!(sess?.bridgeSessionId && state.bridgeReady && !sess.messages.length);
+}
+
 function setActiveSession(id) {
   state.activeId = id;
   if (id) localStorage.setItem('ga_active', id);  // 持久化当前会话，刷新后固定恢复它
@@ -2454,9 +2461,14 @@ function setActiveSession(id) {
   renderSessionList();
   refreshPlanBar(null);
   syncPlanPollTimer();
-  if (sess.bridgeSessionId && state.bridgeReady) {
-    if (!sess.messages.length) pollSession(sess);
-    else planPoll(sess);
+  if (!sess.bridgeSessionId || !state.bridgeReady) return;
+  if (sessionNeedsHydrate(sess)) {
+    setSessionLoading(true);
+    pollSession(sess).finally(() => {
+      if (isActive(sess)) setSessionLoading(false);
+    });
+  } else {
+    planPoll(sess);
   }
 }
 async function closeSession(id) {
@@ -2669,11 +2681,24 @@ async function waitSessionIdle(sess, maxMs = 4000) {
   return !rt(sess).busy;
 }
 
+function setSessionLoading(on) {
+  if (!msgArea || !sessionLoadingEl) return;
+  if (on && msgArea.classList.contains('is-loading')) return;
+  msgArea.classList.toggle('is-session-loading', !!on);
+  sessionLoadingEl.hidden = !on;
+  if (on && sessionLoadingEl.querySelector('[data-i18n]')) {
+    sessionLoadingEl.querySelector('[data-i18n]').textContent = t('chat.sessionLoading');
+  }
+}
+
 function setMsgLoading(on) {
   if (msgArea) msgArea.classList.toggle('is-loading', !!on);
   if (msgLoading) {
     msgLoading.hidden = !on;
-    if (on) scrollBottom();
+    if (on) {
+      setSessionLoading(false);
+      scrollBottom();
+    }
   }
 }
 
@@ -3561,8 +3586,11 @@ window.ga.onBridgeReady(async () => {
   await loadBridgeConfig();
   if (isServicesPageActive()) renderChannelList(gaServiceStore.list());
   const sess = activeSess();
-  if (sess && sess.bridgeSessionId && !sess.messages.length) await pollSession(sess);
-  else if (sess) planPoll(sess);
+  if (sess && sessionNeedsHydrate(sess)) {
+    setSessionLoading(true);
+    try { await pollSession(sess); }
+    finally { if (isActive(sess)) setSessionLoading(false); }
+  } else if (sess) planPoll(sess);
   delete document.documentElement.dataset.bootHasSessions;
   if (sess) refreshEmptyState(sess);
 });
