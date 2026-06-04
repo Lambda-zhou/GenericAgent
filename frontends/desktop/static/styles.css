@@ -1499,6 +1499,7 @@ span.flatpickr-weekday{ color:var(--muted) !important; font-size:11px; }
 .fold-pre{ white-space:pre-wrap; word-break:break-word; max-height:300px; overflow:auto; }
 .fold.fold-thinking{ border-color:var(--fold-thinking-border); background:var(--fold-thinking-bg); }
 .fold.fold-tool{ border:none; background:transparent; }
+.fold.fold-tool-live > summary{ opacity:.85; font-style:italic; }
 .fold.fold-result{ border:none; background:transparent; }
 .fold.fold-turn{ border-color:var(--fold-turn-border); background:var(--fold-turn-bg); }
 .fold.fold-turn > summary{ font-weight:600; color:var(--txt-2); }

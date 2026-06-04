@@ -956,6 +956,183 @@ function extractLastTurnForCopy(text) {
   body = body.replace(/<summary>[\s\S]*?<\/summary>\s*/i, '');
   return body.trim();
 }
+
+/**
+ * Agent 流协议（与 agent_loop.py / continue_cmd 一致）按行解析：
+ * - 工具调用：🛠️ 行 + 开围栏行 `` `{n}text `` + 正文 + 闭围栏行（仅 `{n}，取区间内最后一行）
+ * - 工具结果：开围栏行 `` `{n} ``（n≥5）+ 正文 + 同长度闭围栏行
+ */
+function parseAgentFenceLine(line) {
+  const m = /^[ \t]*(`{3,})([^\n`]*)[ \t]*$/.exec(line ?? '');
+  if (!m) return null;
+  return { ticks: m[1].length, tag: m[2] };
+}
+
+function isAgentStructureBoundaryLine(line, opts) {
+  if (/^🛠️ Tool:/.test(line)) return true;
+  // 工具「结果」区内：5 反引号是开/闭围栏，不能当边界（否则闭围栏会被当成下一结构 → 拆出多个空「工具结果」）
+  if (!opts || !opts.forToolResult) {
+    const f = parseAgentFenceLine(line);
+    if (f && f.ticks >= 5 && f.tag === '') return true;
+  }
+  if (/^\*\*LLM Running \(Turn \d+\)/.test(line)) return true;
+  if (/^<thinking>/i.test(line)) return true;
+  return false;
+}
+
+function indexOfNextAgentStructureLine(lines, from, opts) {
+  for (let i = from; i < lines.length; i++) {
+    if (isAgentStructureBoundaryLine(lines[i], opts)) return i;
+  }
+  return lines.length;
+}
+
+function lastFenceCloseLineIndex(lines, from, toExclusive, tickCount) {
+  let last = -1;
+  for (let i = from; i < toExclusive; i++) {
+    const f = parseAgentFenceLine(lines[i]);
+    if (f && f.ticks === tickCount && f.tag === '') last = i;
+  }
+  return last;
+}
+
+function parseToolCallBlock(lines, i) {
+  const m = /^🛠️ Tool: `([^`]+)`/.exec(lines[i] || '');
+  if (!m) return null;
+  const open = parseAgentFenceLine(lines[i + 1]);
+  if (!open || open.tag !== 'text') return null;
+  const bodyStart = i + 2;
+  const zoneEnd = indexOfNextAgentStructureLine(lines, bodyStart);
+  const closeIdx = lastFenceCloseLineIndex(lines, bodyStart, zoneEnd, open.ticks);
+  if (closeIdx < 0) return null;
+  return {
+    name: m[1],
+    body: lines.slice(bodyStart, closeIdx).join('\n'),
+    nextLine: closeIdx + 1,
+  };
+}
+
+function parseToolResultBlock(lines, i) {
+  const open = parseAgentFenceLine(lines[i]);
+  if (!open || open.ticks < 5 || open.tag !== '') return null;
+  const bodyStart = i + 1;
+  const zoneEnd = indexOfNextToolResultZoneEnd(lines, bodyStart);
+  const closeIdx = lastFenceCloseLineIndex(lines, bodyStart, zoneEnd, open.ticks);
+  if (closeIdx < 0) return null;
+  return {
+    body: lines.slice(bodyStart, closeIdx).join('\n'),
+    nextLine: closeIdx + 1,
+  };
+}
+
+/** 工具结果区 zone：不把 5 反引号围栏行当边界（见 isAgentStructureBoundaryLine） */
+function indexOfNextToolResultZoneEnd(lines, from) {
+  return indexOfNextAgentStructureLine(lines, from, { forToolResult: true });
+}
+
+/** 流式未闭合工具调用（对齐 TUI _safe_pos：末尾 in-flight 🛠️ 块） */
+function parseInFlightToolCall(lines, i) {
+  if (parseToolCallBlock(lines, i)) return null;
+  const m = /^🛠️ Tool: `([^`]+)`/.exec(lines[i] || '');
+  if (!m) return null;
+  const open = parseAgentFenceLine(lines[i + 1]);
+  let bodyStart;
+  let zoneEnd;
+  if (open && open.tag === 'text') {
+    bodyStart = i + 2;
+    zoneEnd = indexOfNextAgentStructureLine(lines, bodyStart);
+    if (lastFenceCloseLineIndex(lines, bodyStart, zoneEnd, open.ticks) >= 0) return null;
+  } else {
+    bodyStart = i + 1;
+    zoneEnd = lines.length;
+    for (let j = i + 1; j < lines.length; j++) {
+      if (isAgentStructureBoundaryLine(lines[j])) { zoneEnd = j; break; }
+    }
+  }
+  return {
+    name: m[1],
+    body: lines.slice(bodyStart, zoneEnd).join('\n'),
+    nextLine: zoneEnd,
+    inFlight: true,
+  };
+}
+
+/** 流式未闭合工具结果（5 反引号围栏未到） */
+function parseInFlightToolResult(lines, i) {
+  if (parseToolResultBlock(lines, i)) return null;
+  const open = parseAgentFenceLine(lines[i]);
+  if (!open || open.ticks < 5 || open.tag !== '') return null;
+  const bodyStart = i + 1;
+  const zoneEnd = indexOfNextToolResultZoneEnd(lines, bodyStart);
+  if (lastFenceCloseLineIndex(lines, bodyStart, zoneEnd, open.ticks) >= 0) return null;
+  return {
+    body: lines.slice(bodyStart, zoneEnd).join('\n'),
+    nextLine: zoneEnd,
+    inFlight: true,
+  };
+}
+
+/** 将 agent 协议块替换为占位符，其余行原样保留给 Markdown */
+function foldAgentProtocolBlocks(body, { onTool, onResult }) {
+  const lines = String(body || '').split('\n');
+  const out = [];
+  let proseFrom = 0;
+  let i = 0;
+
+  const flushProse = (until) => {
+    if (until <= proseFrom) return;
+    out.push(lines.slice(proseFrom, until).join('\n'));
+    proseFrom = until;
+  };
+
+  while (i < lines.length) {
+    const tool = parseToolCallBlock(lines, i);
+    if (tool) {
+      flushProse(i);
+      out.push(onTool(tool.name, tool.body));
+      i = tool.nextLine;
+      proseFrom = i;
+      continue;
+    }
+    const result = parseToolResultBlock(lines, i);
+    if (result) {
+      flushProse(i);
+      out.push(onResult(result.body));
+      i = result.nextLine;
+      proseFrom = i;
+      continue;
+    }
+    const liveTool = parseInFlightToolCall(lines, i);
+    if (liveTool) {
+      flushProse(i);
+      out.push(onTool(liveTool.name, liveTool.body, { inFlight: true }));
+      i = liveTool.nextLine;
+      proseFrom = i;
+      continue;
+    }
+    const liveResult = parseInFlightToolResult(lines, i);
+    if (liveResult) {
+      flushProse(i);
+      out.push(onResult(liveResult.body, { inFlight: true }));
+      i = liveResult.nextLine;
+      proseFrom = i;
+      continue;
+    }
+    i++;
+  }
+  flushProse(lines.length);
+  return out.join('');
+}
+
+function extractAskUserToolJson(content) {
+  const lines = String(content || '').split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const block = parseToolCallBlock(lines, i);
+    if (block && block.name === 'ask_user') return block.body;
+  }
+  return null;
+}
+
 function renderAssistant(text) {
   const src = String(text || '');
   // 1) 按 "LLM Running (Turn N)..." 标记切分多轮；N 从原文捕获，无硬编码文案
@@ -979,24 +1156,39 @@ function renderAssistant(text) {
   // 2) 块级折叠：占位符使用 HTML 注释，避免与正文 F\d+ 冲突
   const folds = [];
   const asks = [];
-  const stash = (label, body, cls) => { folds.push({ label, body, cls: cls || '' }); return `\n\n§§FOLD:${folds.length - 1}§§\n\n`; };
+  const stash = (label, body, cls, opts) => {
+    folds.push({ label, body, cls: cls || '', open: !!(opts && opts.open) });
+    return `\n\n§§FOLD:${folds.length - 1}§§\n\n`;
+  };
   const stashAsk = (data) => { asks.push(data); return `\n\n§§ASK:${asks.length - 1}§§\n\n`; };
   const foldBlocks = (body) => {
     let s = body;
     // thinking: 兼容 <thinking> XML 与 <details>...</details>（未来扩展）
     s = s.replace(/<thinking>[\s\S]*?<\/thinking>/gi, m => stash(t('fold.thinking'), m.replace(/<\/?thinking>/gi, ''), 'fold-thinking'));
-    // ask_user：渲染为提问卡片（必须在通用工具规则之前匹配）
-    s = s.replace(/🛠️ Tool: `ask_user`[^\n]*\n````text\n([\s\S]*?)\n````/g,
-                  (m, json) => {
-                    const data = parseAskUserJson(json);
-                    if (data && normalizeAskUserData(data)) return stashAsk(data);
-                    return stash(`${t('fold.tool')}: ask_user`, json, 'fold-tool');
-                  });
-    // 工具调用：agent_loop 实际格式 = "🛠️ Tool: `name`  📥 args:\n````text\n{json}\n````"
-    s = s.replace(/🛠️ Tool: `([^`]+)`[^\n]*\n````text\n([\s\S]*?)\n````/g,
-                  (_, name, json) => stash(`${t('fold.tool')}: ${name}`, json, 'fold-tool'));
-    // 工具结果：5 反引号围栏
-    s = s.replace(/`{5}\n([\s\S]*?)\n`{5}/g, (_, body) => stash(t('fold.toolResult'), body, 'fold-result'));
+    s = foldAgentProtocolBlocks(s, {
+      onTool(name, json, meta) {
+        if (name === 'ask_user' && !meta?.inFlight) {
+          const data = parseAskUserJson(json);
+          if (data && normalizeAskUserData(data)) return stashAsk(data);
+        }
+        const live = !!meta?.inFlight;
+        return stash(
+          `${t('fold.tool')}: ${name}${live ? ' …' : ''}`,
+          json,
+          live ? 'fold-tool fold-tool-live' : 'fold-tool',
+          { open: live },
+        );
+      },
+      onResult(body, meta) {
+        const live = !!meta?.inFlight;
+        return stash(
+          `${t('fold.toolResult')}${live ? ' …' : ''}`,
+          body,
+          live ? 'fold-result fold-tool-live' : 'fold-result',
+          { open: live },
+        );
+      },
+    });
     // 兼容旧 XML 标记（保险）
     s = s.replace(/<function_calls>[\s\S]*?<\/function_calls>/gi, m => stash(t('fold.tool'), m, 'fold-tool'));
     s = s.replace(/<function_results>[\s\S]*?<\/function_results>/gi, m => stash(t('fold.toolResult'), m, 'fold-result'));
@@ -1041,7 +1233,8 @@ function renderAssistant(text) {
     .replace(/(?:<p>\s*)?§§ASK:(\d+)§§(?:\s*<\/p>)?/g, (_, i) => renderAskUserNotice(asks[Number(i)]))
     .replace(/(?:<p>\s*)?§§FOLD:(\d+)§§(?:\s*<\/p>)?/g, (_, i) => {
       const f = folds[Number(i)];
-      return `<details class="fold ${f.cls}"><summary>${escapeHtml(f.label)}</summary><pre class="fold-pre">${escapeHtml(f.body)}</pre></details>`;
+      const openAttr = f.open ? ' open' : '';
+      return `<details class="fold ${f.cls}"${openAttr}><summary>${escapeHtml(f.label)}</summary><pre class="fold-pre">${escapeHtml(f.body)}</pre></details>`;
     });
 }
 
@@ -1137,7 +1330,6 @@ function shouldShowAskCandidates(item) {
   return true;
 }
 
-const ASK_USER_TOOL_RE = /🛠️ Tool: `ask_user`[^\n]*\n````text\n([\s\S]*?)\n````/;
 
 function renderAskUserNotice(data) {
   const item = normalizeAskUserData(data);
@@ -1180,10 +1372,10 @@ function getPendingAskUser(sess) {
   let askData = null;
   for (let i = msgs.length - 1; i >= 0; i--) {
     if (msgs[i].role !== 'assistant') continue;
-    const m = ASK_USER_TOOL_RE.exec(msgs[i].content || '');
-    if (m) {
+    const json = extractAskUserToolJson(msgs[i].content || '');
+    if (json != null) {
       lastAskIdx = i;
-      askData = normalizeAskUserData(parseAskUserJson(m[1]));
+      askData = normalizeAskUserData(parseAskUserJson(json));
       break;
     }
   }
@@ -1542,6 +1734,46 @@ function scrollBottom(force) {
 /* ═══════════════ 打字机效果 (PR移植) ═══════════════ */
 const TW_SPEED = 12;  // 每 tick 显示字符数
 const TW_INTERVAL = 30; // ms
+const TW_RECOVER_MIN = 1200;  // 刷新恢复：partial 已有存量超过此值 → 直接对齐，不重播打字机
+const DRAFT_INTERACT_MS = 520; // 用户滚代码块/点折叠时暂缓 DOM 重写
+
+function isDraftInteractFrozen(r) {
+  return Date.now() < (r.draftFreezeUntil || 0);
+}
+function armDraftInteractFreeze(r, ms = DRAFT_INTERACT_MS) {
+  r.draftFreezeUntil = Math.max(r.draftFreezeUntil || 0, Date.now() + ms);
+}
+function snapshotDraftScroll(root) {
+  if (!root) return [];
+  return [...root.querySelectorAll('.bubble .code-block pre, .bubble .fold-pre')].map(n => n.scrollTop);
+}
+function restoreDraftScroll(root, tops) {
+  if (!root || !tops.length) return;
+  const nodes = root.querySelectorAll('.bubble .code-block pre, .bubble .fold-pre');
+  tops.forEach((top, i) => { if (nodes[i] && top > 0) nodes[i].scrollTop = top; });
+}
+function bindDraftInteractGuard(el, r) {
+  if (!el || el.dataset.gaDraftGuard) return;
+  el.dataset.gaDraftGuard = '1';
+  const arm = () => armDraftInteractFreeze(r);
+  el.addEventListener('mousedown', (e) => {
+    if (e.target.closest('details summary, .code-block pre, .fold-pre')) arm();
+  }, true);
+  el.addEventListener('wheel', (e) => {
+    if (e.target.closest('.code-block pre, .fold-pre')) arm();
+  }, { capture: true, passive: true });
+  el.addEventListener('toggle', (e) => {
+    if (e.target.matches('details')) arm();
+  }, true);
+}
+/** 刷新/重连后已有大段 partial：一次性对齐到当前全文，仅对之后新增字做打字机 */
+function maybeRecoverDraftSeek(r) {
+  const total = (r.draftText || '').length;
+  const tw = r.twState;
+  if (!r.draftRecoverPending || !tw || tw.shown > 0 || total < TW_RECOVER_MIN) return;
+  tw.shown = total;
+  r.draftRecoverPending = false;
+}
 
 function renderDraft(sess) {
   const r = rt(sess);
@@ -1549,11 +1781,13 @@ function renderDraft(sess) {
   const box = ensureMsgs();
   if (!r.draftEl || r.draftEl.parentNode !== box) {
     r.draftEl = document.createElement('div'); r.draftEl.className = 'msg assistant'; box.appendChild(r.draftEl);
+    bindDraftInteractGuard(r.draftEl, r);
     // 正在计时则立即挂载 badge，避免等 1s tick 后才出现导致跳动
     if (r.taskStartedAt) ensureTaskElapsedBadge(r.draftEl, r.taskStartedAt, null);
   }
   if (!r.twState) r.twState = { shown: 0, timer: null };
   const tw = r.twState;
+  maybeRecoverDraftSeek(r);
   if (!tw.timer) {
     tw.timer = setInterval(() => {
       const cur = r.draftText || '';
@@ -1561,30 +1795,35 @@ function renderDraft(sess) {
         clearInterval(tw.timer); tw.timer = null;
         return;
       }
+      if (isDraftInteractFrozen(r)) return;
       tw.shown = Math.min(tw.shown + TW_SPEED, cur.length);
-      const visible = cur.slice(0, tw.shown);
-      rewriteDraftBubble(r, visible);
+      rewriteDraftBubble(r, cur.slice(0, tw.shown));
     }, TW_INTERVAL);
   }
-  const visible = (r.draftText || '').slice(0, tw.shown);
-  rewriteDraftBubble(r, visible);
+  if (!isDraftInteractFrozen(r)) {
+    rewriteDraftBubble(r, (r.draftText || '').slice(0, tw.shown));
+  }
   refreshEmptyState(sess);
 }
 
 // 重写打字机气泡：先记 near + 保存 <details> open 态 + badge；innerHTML 替换后恢复；仅当原先贴底才滚
 function rewriteDraftBubble(r, visible) {
+  if (!r.draftEl) return;
+  if (isDraftInteractFrozen(r)) return;
+
   const wasNear = isNearBottom();
+  const scrollTops = snapshotDraftScroll(r.draftEl);
   const openIdx = [];
   // 保存 badge（会被 innerHTML 覆盖）
-  const oldBadge = r.draftEl ? r.draftEl.querySelector(':scope > .task-elapsed') : null;
+  const oldBadge = r.draftEl.querySelector(':scope > .task-elapsed');
   const badgeText = oldBadge ? oldBadge.textContent : null;
-  if (r.draftEl) {
-    r.draftEl.querySelectorAll('details').forEach((d, i) => { if (d.open) openIdx.push(i); });
-  }
+  r.draftEl.querySelectorAll('details').forEach((d, i) => { if (d.open) openIdx.push(i); });
+
   r.draftEl.innerHTML = `<div class="bubble md">${renderAssistant(visible)}<span class="cursor"></span></div>`;
   postRenderEnhance(r.draftEl.querySelector('.bubble'));
   const dets = r.draftEl.querySelectorAll('details');
   openIdx.forEach(i => { if (dets[i]) dets[i].open = true; });
+  restoreDraftScroll(r.draftEl, scrollTops);
   // 恢复 badge
   if (badgeText) {
     const badge = document.createElement('div');
@@ -1593,11 +1832,14 @@ function rewriteDraftBubble(r, visible) {
     badge.dataset.live = '1';
     r.draftEl.prepend(badge);
   }
-  if (wasNear) scrollBottom(true);
+  const inCodeScroll = document.activeElement?.closest?.('.code-block pre, .fold-pre')
+    && r.draftEl.contains(document.activeElement);
+  if (wasNear && !inCodeScroll) scrollBottom(true);
 }
 
 function flushTypewriter(sess) {
   const r = rt(sess);
+  r.draftRecoverPending = false;
   if (r.twState) {
     if (r.twState.timer) clearInterval(r.twState.timer);
     r.twState = null;
@@ -1937,7 +2179,16 @@ function normalize(m) {
 }
 function upsert(sess, raw, partial) {
   const m = normalize(raw); const r = rt(sess);
-  if (partial && m.role === 'assistant') { r.draftText = m.content; if (isActive(sess)) renderDraft(sess); return; }
+  if (partial && m.role === 'assistant') {
+    const wasEmpty = !(r.draftText || '').length;
+    r.draftText = m.content;
+    const tw = r.twState;
+    if (wasEmpty && r.draftText.length >= TW_RECOVER_MIN && (!tw || tw.shown === 0)) {
+      r.draftRecoverPending = true;
+    }
+    if (isActive(sess)) renderDraft(sess);
+    return;
+  }
   if (!m.id || r.seen.has(m.id)) return;
   r.seen.add(m.id); r.lastId = Math.max(r.lastId, m.id);
   if (m.role === 'assistant' && r.draftEl) { flushTypewriter(sess); r.draftEl.remove(); r.draftEl = null; r.draftText = ''; }
