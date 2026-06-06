@@ -329,7 +329,7 @@ const I18N = {
     'collab.timeMin': '{n} 分钟前',
     'collab.timeHr': '{n} 小时前',
     'collab.timeDay': '{n} 天前',
-    'page.token.title': 'Token 统计', 'page.token.sub': '每会话与累计的 token 用量及估算成本',
+    'page.token.title': 'Token 统计', 'page.token.sub': '每会话与累计的 token 用量及缓存率',
     'status.connecting': '连接中…', 'status.ready': '就绪', 'status.running': '运行中',
     'status.disconnected': '未连接', 'status.stopped': '已停止', 'status.idle': '空闲',
     'conv.emptyList': '暂无会话，点「＋ 新对话」开始', 'conv.defaultTitle': '新对话',
@@ -385,7 +385,7 @@ const I18N = {
     'proc.imbotWechat': 'imbot · 微信', 'proc.imbotDing': 'imbot · 钉钉', 'proc.scheduler': '定时任务调度',
     'cm.scheduling': '调度中', 'cm.running': '执行中', 'cm.idleSt': '空闲',
     'cm.master': '已派 3 子任务', 'cm.w1': '子任务：抓取数据', 'cm.w2': '子任务：复核结果', 'cm.sub': '等待派单',
-    'tok.total': '累计 token', 'tok.cost': '估算成本', 'tok.today': '今日 token', 'tok.tabAll': '聊天', 'tok.tabConductor': 'Conductor', 'tok.condTotal': 'Conductor 累计', 'tok.condCurrent': 'Conductor 本次', 'tok.condTip': 'Conductor 消耗的 token 不计入聊天累计 token 中', 'tok.disclaimer': '不同 API 网站的计费价格可能会有差异，请以实际网站为准。', 'tok.chartToggle': '趋势图',
+    'tok.total': '累计 token', 'tok.cost': '缓存率', 'tok.today': '今日 token', 'tok.tabAll': '聊天', 'tok.tabConductor': 'Conductor', 'tok.condTotal': 'Conductor 累计', 'tok.condCurrent': 'Conductor 本次', 'tok.condTip': 'Conductor 消耗的 token 不计入聊天累计 token 中', 'tok.disclaimer': '不同 API 网站的计费价格可能会有差异，请以实际网站为准。', 'tok.chartToggle': '趋势图',
     'tok.colSession': '会话', 'tok.colIn': '输入', 'tok.colOut': '输出', 'tok.colCacheW': '缓存写入', 'tok.colCache': '缓存读取', 'tok.colCost': '成本',
     'tok.from': '从', 'tok.to': '到', 'tok.reset': '重置', 'tok.noData': '暂无记录', 'tok.deleted': '此会话已删除',
     'tok.pricingUnknown': '⚠ 此模型计费规则尚未明确，按默认估算',
@@ -481,7 +481,7 @@ const I18N = {
     'collab.timeMin': '{n}m ago',
     'collab.timeHr': '{n}h ago',
     'collab.timeDay': '{n}d ago',
-    'page.token.title': 'Token usage', 'page.token.sub': 'Per-session and total token usage & estimated cost',
+    'page.token.title': 'Token usage', 'page.token.sub': 'Per-session and total token usage & cache rate',
     'status.connecting': 'Connecting…', 'status.ready': 'Ready', 'status.running': 'Running',
     'status.disconnected': 'Disconnected', 'status.stopped': 'Stopped', 'status.idle': 'Idle',
     'conv.emptyList': 'No chats yet — click “＋ New chat”', 'conv.defaultTitle': 'New chat',
@@ -537,7 +537,7 @@ const I18N = {
     'proc.imbotWechat': 'imbot · WeChat', 'proc.imbotDing': 'imbot · DingTalk', 'proc.scheduler': 'Scheduler',
     'cm.scheduling': 'Scheduling', 'cm.running': 'Running', 'cm.idleSt': 'Idle',
     'cm.master': 'Dispatched 3 subtasks', 'cm.w1': 'Subtask: fetch data', 'cm.w2': 'Subtask: review results', 'cm.sub': 'Waiting for tasks',
-    'tok.total': 'Total tokens', 'tok.cost': 'Est. cost', 'tok.today': 'Today tokens', 'tok.tabAll': 'Chat', 'tok.tabConductor': 'Conductor', 'tok.condTotal': 'Conductor Total', 'tok.condCurrent': 'Conductor Current', 'tok.condTip': 'Conductor tokens are not included in chat totals', 'tok.disclaimer': 'Pricing may vary by API provider. Please refer to the actual website.', 'tok.chartToggle': 'Trend',
+    'tok.total': 'Total tokens', 'tok.cost': 'Cache rate', 'tok.today': 'Today tokens', 'tok.tabAll': 'Chat', 'tok.tabConductor': 'Conductor', 'tok.condTotal': 'Conductor Total', 'tok.condCurrent': 'Conductor Current', 'tok.condTip': 'Conductor tokens are not included in chat totals', 'tok.disclaimer': 'Pricing may vary by API provider. Please refer to the actual website.', 'tok.chartToggle': 'Trend',
     'tok.colSession': 'Session', 'tok.colIn': 'Input', 'tok.colOut': 'Output', 'tok.colCacheW': 'Cache write', 'tok.colCache': 'Cache read', 'tok.colCost': 'Cost',
     'tok.from': 'From', 'tok.to': 'To', 'tok.reset': 'Reset', 'tok.noData': 'No records', 'tok.deleted': 'Session deleted',
     'tok.pricingUnknown': '⚠ Pricing not confirmed, using defaults',
@@ -3693,12 +3693,13 @@ function tokGetFiltered() {
 }
 
 function tokRenderStats(filtered, all) {
-  let total=0, cost=0;
-  filtered.forEach(r=>{total+=(r.input||0)+(r.output||0); cost+=parseFloat(estCost(r.input||0,r.output||0,r.model,r.cacheRead||0,r.cacheCreate||0));});
+  let total=0, totalInput=0, totalCacheRead=0, totalCacheCreate=0;
+  filtered.forEach(r=>{total+=(r.input||0)+(r.output||0)+(r.cacheRead||0)+(r.cacheCreate||0); totalInput+=(r.input||0); totalCacheRead+=(r.cacheRead||0); totalCacheCreate+=(r.cacheCreate||0);});
   if(tokTotalN) tokTotalN.textContent=fmtTok(total);
-  if(tokCostN) tokCostN.textContent='¥ '+cost.toFixed(1);
+  const cacheBase = totalInput + totalCacheRead + totalCacheCreate;
+  if(tokCostN) tokCostN.textContent= cacheBase > 0 ? (totalCacheRead / cacheBase * 100).toFixed(1) + '%' : '0%';
   const todayStart=new Date(); todayStart.setHours(0,0,0,0); const todayTs=todayStart.getTime()/1000;
-  let todayT=0; all.filter(r=>r.ts>=todayTs).forEach(r=>{todayT+=(r.input||0)+(r.output||0);});
+  let todayT=0; all.filter(r=>r.ts>=todayTs).forEach(r=>{todayT+=(r.input||0)+(r.output||0)+(r.cacheRead||0)+(r.cacheCreate||0);});
   if(tokTodayN) tokTodayN.textContent=fmtTok(todayT);
 }
 
@@ -3721,15 +3722,18 @@ function tokRenderTable(records) {
   if(_tokPage>=totalPages)_tokPage=totalPages-1;
   const pageItems=sorted.slice(_tokPage*TOK_PER_PAGE,(_tokPage+1)*TOK_PER_PAGE);
   for(const s of pageItems){
-    let sc=0; s.prompts.forEach(p=>{sc+=parseFloat(estCost(p.input||0,p.output||0,p.model,p.cacheRead||0,p.cacheCreate||0));});
+    const sCacheBase = s.input + s.cacheRead + s.cacheCreate;
+    const sCacheRate = sCacheBase > 0 ? (s.cacheRead / sCacheBase * 100).toFixed(1) + '%' : '0%';
     const tr=document.createElement('tr'); tr.className='tok-row-session';
-    tr.innerHTML=`<td>${escapeHtml(s.title)}${s.deleted?'<span class="tok-deleted">'+t('tok.deleted')+'</span>':''}</td><td>${fmtTok(s.input)}</td><td>${fmtTok(s.output)}</td><td>${fmtTok(s.cacheCreate)}</td><td>${fmtTok(s.cacheRead)}</td><td>¥${sc.toFixed(2)}</td>`;
+    tr.innerHTML=`<td>${escapeHtml(s.title)}${s.deleted?'<span class="tok-deleted">'+t('tok.deleted')+'</span>':''}</td><td>${fmtTok(s.input)}</td><td>${fmtTok(s.output)}</td><td>${fmtTok(s.cacheCreate)}</td><td>${fmtTok(s.cacheRead)}</td><td>${sCacheRate}</td>`;
     tokTbody.appendChild(tr);
     const details=[]; s.prompts.sort((a,b)=>b.ts-a.ts);
     for(const p of s.prompts){
       const dr=document.createElement('tr'); dr.className='tok-detail'; dr.hidden=true;
-      const modelHtml = p.model ? ` · <span class="tok-model-tip" data-tip="${escapeHtml(modelPriceTip(p.model))}">${escapeHtml(p.model)}</span>` : '';
-      dr.innerHTML=`<td>${fmtTime(p.ts)}${modelHtml}</td><td>${fmtTok(p.input||0)}</td><td>${fmtTok(p.output||0)}</td><td>${fmtTok(p.cacheCreate||0)}</td><td>${fmtTok(p.cacheRead||0)}</td><td>¥${estCost(p.input||0,p.output||0,p.model,p.cacheRead||0,p.cacheCreate||0)}</td>`;
+      const modelHtml = p.model ? ` · <span class="tok-model-tip">${escapeHtml(p.model)}</span>` : '';
+      const pCacheBase = (p.input||0) + (p.cacheRead||0) + (p.cacheCreate||0);
+      const pCacheRate = pCacheBase > 0 ? ((p.cacheRead||0) / pCacheBase * 100).toFixed(1) + '%' : '0%';
+      dr.innerHTML=`<td>${fmtTime(p.ts)}${modelHtml}</td><td>${fmtTok(p.input||0)}</td><td>${fmtTok(p.output||0)}</td><td>${fmtTok(p.cacheCreate||0)}</td><td>${fmtTok(p.cacheRead||0)}</td><td>${pCacheRate}</td>`;
       tokTbody.appendChild(dr); details.push(dr);
     }
     tr.addEventListener('click',()=>{const o=tr.classList.toggle('open');details.forEach(d=>d.hidden=!o);});
@@ -3795,7 +3799,11 @@ async function loadConductorTokens() {
   if (!tokTbody) return;
   const tip = t('tok.condTip');
   const _ci = `<svg width="14" height="14" ${CONDUCTOR_SVG_ATTRS} style="vertical-align:-2px;margin-right:4px">${CONDUCTOR_SVG_INNER}</svg>`;
-  tokTbody.innerHTML = `<tr class="tok-row-conductor" title="${tip}"><td>${_ci}${t('tok.condTotal')}</td><td>${fmtTok(hIn)}</td><td>${fmtTok(hOut)}</td><td>${fmtTok(hCc)}</td><td>${fmtTok(hCr)}</td><td>¥${hCost.toFixed(2)}</td></tr><tr class="tok-row-conductor" title="${tip}"><td>${_ci}${t('tok.condCurrent')}</td><td>${fmtTok(curIn)}</td><td>${fmtTok(curOut)}</td><td>${fmtTok(curCc)}</td><td>${fmtTok(curCr)}</td><td>¥${curCost.toFixed(2)}</td></tr>`;
+  const hCacheBase = hIn + hCr + hCc;
+  const hCacheRate = hCacheBase > 0 ? (hCr / hCacheBase * 100).toFixed(1) + '%' : '0%';
+  const curCacheBase = curIn + curCr + curCc;
+  const curCacheRate = curCacheBase > 0 ? (curCr / curCacheBase * 100).toFixed(1) + '%' : '0%';
+  tokTbody.innerHTML = `<tr class="tok-row-conductor" title="${tip}"><td>${_ci}${t('tok.condTotal')}</td><td>${fmtTok(hIn)}</td><td>${fmtTok(hOut)}</td><td>${fmtTok(hCc)}</td><td>${fmtTok(hCr)}</td><td>${hCacheRate}</td></tr><tr class="tok-row-conductor" title="${tip}"><td>${_ci}${t('tok.condCurrent')}</td><td>${fmtTok(curIn)}</td><td>${fmtTok(curOut)}</td><td>${fmtTok(curCc)}</td><td>${fmtTok(curCr)}</td><td>${curCacheRate}</td></tr>`;
   const pager = document.getElementById('tok-pager');
   if (pager) pager.innerHTML = '';
 }
@@ -3824,19 +3832,18 @@ function renderTokChart() {
   const daily = {};
   for (const r of history) {
     const day = new Date(r.ts * 1000).toLocaleDateString('sv');
-    const cost = parseFloat(estCost(r.input||0, r.output||0, r.model||'', r.cacheRead||0, r.cacheCreate||0));
-    daily[day] = (daily[day] || 0) + cost;
+    daily[day] = (daily[day] || 0) + (r.input || 0) + (r.output || 0) + (r.cacheRead || 0) + (r.cacheCreate || 0);
   }
   const rawDays = Object.keys(daily).sort();
   if (!rawDays.length) { tokChartEl.innerHTML = ''; return; }
-  // Fill gaps: include days with 0 cost between first and last
+  // Fill gaps: include days with 0 between first and last
   const days = [];
   const d0 = new Date(rawDays[0]), d1 = new Date(rawDays[rawDays.length - 1]);
   for (let d = new Date(d0); d <= d1; d.setDate(d.getDate() + 1)) {
     days.push(d.toLocaleDateString('sv'));
   }
   const vals = days.map(d => daily[d] || 0);
-  const maxVal = Math.max(...vals, 0.01);
+  const maxVal = Math.max(...vals, 1);
   const W = 600, H = 260, PL = 48, PR = 30, PT = 14, PB = 28;
   const cw = W - PL - PR, ch = H - PT - PB;
   const step = days.length > 1 ? cw / (days.length - 1) : cw;
@@ -3844,14 +3851,14 @@ function renderTokChart() {
   const polyline = pts.map(p => p.join(',')).join(' ');
   const yLines = [0, 0.25, 0.5, 0.75, 1].map(f => {
     const y = PT + ch - f * ch;
-    const label = '¥' + (maxVal * f).toFixed(1);
+    const label = fmtTok(maxVal * f);
     return `<line x1="${PL}" x2="${W-PR}" y1="${y}" y2="${y}" stroke="var(--line-soft)" stroke-width="0.5"/><text x="${PL-4}" y="${y+3}" text-anchor="end" font-size="9" fill="var(--muted)">${label}</text>`;
   }).join('');
   const xLabels = days.map((d, i) => {
     if (days.length > 14 && i % Math.ceil(days.length / 7) !== 0 && i !== days.length - 1) return '';
     return `<text x="${pts[i][0]}" y="${H-4}" text-anchor="middle" font-size="9" fill="var(--muted)">${d.slice(5)}</text>`;
   }).join('');
-  const dots = pts.map((p, i) => `<circle cx="${p[0]}" cy="${p[1]}" r="3" fill="var(--blue)"><title>${days[i]}: ¥${vals[i].toFixed(2)}</title></circle>`).join('');
+  const dots = pts.map((p, i) => `<circle cx="${p[0]}" cy="${p[1]}" r="3" fill="var(--blue)"><title>${days[i]}: ${fmtTok(vals[i])}</title></circle>`).join('');
   tokChartEl.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${yLines}${xLabels}<polyline points="${polyline}" fill="none" stroke="var(--blue)" stroke-width="1.5"/>${dots}</svg>`;
 }
 

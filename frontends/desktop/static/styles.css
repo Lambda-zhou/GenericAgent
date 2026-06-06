@@ -955,18 +955,8 @@ span.flatpickr-weekday{ color:var(--muted) !important; font-size:11px; }
 .tok-detail td:not(:first-child){ text-align:right; }
 .tok-detail[hidden]{ display:none; }
 .tok-model-tip{
-  position:relative; cursor:help; color:var(--accent);
-  border-bottom:1px dashed var(--muted2);
+  color:var(--accent);
 }
-.tok-model-tip::after{
-  content:attr(data-tip); position:absolute; bottom:calc(100% + 6px); left:50%;
-  transform:translateX(-50%); white-space:pre-line; font-size:11px; line-height:1.5;
-  background:var(--card); color:var(--txt); border:1px solid var(--line);
-  border-radius:4px; padding:8px 10px; box-shadow:var(--shadow-pop);
-  pointer-events:none; opacity:0; transition:opacity .15s; z-index:100;
-  min-width:160px; text-align:left;
-}
-.tok-model-tip:hover::after{ opacity:1; }
 .tok-pager{ display:flex; gap:4px; justify-content:center; margin-top:12px; }
 .tok-pager button{
   min-width:28px; height:28px; border:1px solid var(--line); border-radius:4px;
