@@ -1562,6 +1562,7 @@ function bindResize(handle, panel, dir, min, max) {
   handle.addEventListener('mousedown', (e) => {
     dragging = true; startX = e.clientX; startW = panel.offsetWidth;
     handle.classList.add('dragging');
+    panel.style.transition = 'none';  // 拖拽期间禁用 transition，避免宽度动画延迟
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
     e.preventDefault();
@@ -1576,6 +1577,7 @@ function bindResize(handle, panel, dir, min, max) {
     if (!dragging) return;
     dragging = false;
     handle.classList.remove('dragging');
+    panel.style.transition = '';  // 恢复 CSS transition（按钮折叠动画仍生效）
     document.body.style.cursor = '';
     document.body.style.userSelect = '';
   });
