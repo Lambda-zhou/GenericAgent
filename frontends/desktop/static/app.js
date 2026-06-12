@@ -5094,7 +5094,10 @@ loadHiddenBuiltins();
 renderAllPresets();
 if (state.activeId) setActiveSession(state.activeId);
 else refreshEmptyState(null);
-chatStatus.setConnecting();
+// bridge-ready 可能在上面的 await 期间就已到达（WS 一连上 bridge 即推送），
+// 此时 state.bridgeReady 已为 true，直接按真实状态渲染，避免把「就绪」覆盖回「连接中」。
+if (state.bridgeReady) refreshStatusLabel();
+else chatStatus.setConnecting();
 window.ga.startBridge && window.ga.startBridge();
 })();
 
