@@ -1,13 +1,6 @@
 name: Build Windows Desktop Test Release
 
 "on":
-  push:
-    branches:
-      - test
-    paths:
-      - "frontends/desktop/**"
-      - "desktop_release/**"
-      - ".github/workflows/windows-test-release.yml"
   workflow_dispatch:
 
 permissions:

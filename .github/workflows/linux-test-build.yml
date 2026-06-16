@@ -1,13 +1,6 @@
 name: Build Linux Desktop Test Artifact
 
 "on":
-  push:
-    branches:
-      - test
-    paths:
-      - "frontends/desktop/**"
-      - "desktop_release/**"
-      - ".github/workflows/linux-test-build.yml"
   workflow_dispatch:
 
 permissions:
