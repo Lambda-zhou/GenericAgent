@@ -31,7 +31,7 @@ var GA_MSG = {
 };
 window.gaProgress = function(pct, key){
   var s = document.getElementById('ga-status');
-  if (s) { s.textContent = GA_MSG[key] || key; s.style.color = ''; }
+  if (s) s.textContent = GA_MSG[key] || key;
   var bar = document.querySelector('.bar');
   var fill = document.getElementById('ga-bar');
   if (bar) bar.classList.add('show');
@@ -40,14 +40,9 @@ window.gaProgress = function(pct, key){
     else { fill.classList.remove('indet'); fill.style.width = Math.max(0, Math.min(100, pct)) + '%'; }
   }
 };
-window.gaError = function(msg){
-  var s = document.getElementById('ga-status');
-  if (s) { s.textContent = msg; s.style.color = '#dc2626'; }
-  var bar = document.querySelector('.bar');
-  if (bar) bar.classList.remove('show');
-};
 document.addEventListener('DOMContentLoaded', function(){
-  window.gaProgress(-1, 'starting_app');
+  var s = document.getElementById('ga-status');
+  if (s) s.textContent = GA_MSG.starting_app;
 });
 </script>
 </head>
