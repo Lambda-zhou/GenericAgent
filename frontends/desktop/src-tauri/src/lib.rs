@@ -682,7 +682,6 @@ pub fn run() {
             thread::spawn(move || {
                 // Progress reporter: push status into the loading window (window.gaProgress).
                 let main_win = handle.get_webview_window("main");
-                wait_until_extras_ports_free(main_win.as_ref());
 
                 let report = |pct: i32, msg: &str| {
                     if let Some(w) = &main_win {
@@ -732,8 +731,9 @@ pub fn run() {
                 let bridge_ready = wait_for_port(14168, wait);
 
                 if bridge_ready {
-                    wait_until_extras_ports_free(main_win.as_ref());
-                    request_start_extras();
+                    // The bridge auto-starts conductor + scheduler itself (on_startup), so we do
+                    // NOT probe their ports here: that would self-detect the bridge's own
+                    // just-started extras and falsely report "ports busy".
                     if !wait_for_port(14168, Duration::from_secs(15)) {
                         eprintln!("[tauri] bridge not reachable before navigate");
                         if let Some(w) = &main_win {
