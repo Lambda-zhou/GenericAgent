@@ -21,15 +21,6 @@ fn project_root() -> PathBuf {
         .to_path_buf()
 }
 
-fn find_bridge_script() -> PathBuf {
-    // exe is at frontends/GenericAgent.exe
-    // bridge is at frontends/desktop_bridge.py
-    std::env::current_exe()
-        .expect("cannot get exe path")
-        .parent().expect("cannot get exe dir")
-        .join("desktop_bridge.py")
-}
-
 /// Directory next to which a self-contained bundle keeps its runtime/ folder.
 /// Windows: the exe's folder. Linux: the .AppImage's folder ($APPIMAGE) when launched as an
 /// AppImage (current_exe would otherwise point inside the read-only squashfs mount).
@@ -357,162 +348,6 @@ fn run_offline_prepare(project_dir: &str, report: &dyn Fn(i32, &str)) -> Result<
     Ok(())
 }
 
-const CONDUCTOR_PORT: u16 = 8900;
-const SCHEDULER_LOCK_PORT: u16 = 45762;
-
-fn is_port_open(port: u16) -> bool {
-    let addr = format!("127.0.0.1:{}", port);
-    let Ok(sock_addr) = addr.parse() else {
-        return false;
-    };
-    TcpStream::connect_timeout(&sock_addr, Duration::from_millis(300)).is_ok()
-}
-
-fn extras_ports_busy_label() -> Option<String> {
-    let mut busy = Vec::new();
-    if is_port_open(CONDUCTOR_PORT) {
-        busy.push(format!("{} (conductor)", CONDUCTOR_PORT));
-    }
-    if is_port_open(SCHEDULER_LOCK_PORT) {
-        busy.push(format!("{} (scheduler)", SCHEDULER_LOCK_PORT));
-    }
-    if busy.is_empty() {
-        None
-    } else {
-        Some(busy.join(", "))
-    }
-}
-
-fn alert_extras_ports_busy(win: &tauri::WebviewWindow, ports: &str) {
-    let msg = format!(
-        "Conductor/Scheduler 端口已被占用：{}\n请结束占用进程后点「确定」重新检测。",
-        ports
-    );
-    let js = format!(
-        "alert({})",
-        serde_json::to_string(&msg).unwrap_or_else(|_| "\"\"".to_string())
-    );
-    let _ = win.eval(&js);
-}
-
-/// Browser alert on loading.html; re-prompt if ports stay busy after dismiss.
-fn wait_until_extras_ports_free(win: Option<&tauri::WebviewWindow>) {
-    while let Some(ports) = extras_ports_busy_label() {
-        eprintln!("[tauri] extras ports busy: {}", ports);
-        if let Some(w) = win {
-            alert_extras_ports_busy(w, &ports);
-        }
-        let wait_start = Instant::now();
-        while extras_ports_busy_label().is_some() {
-            if wait_start.elapsed() > Duration::from_secs(3) {
-                break;
-            }
-            thread::sleep(Duration::from_millis(300));
-        }
-    }
-}
-
-fn request_stop_extras() {
-    use std::io::{Read, Write};
-    let Ok(mut stream) = TcpStream::connect_timeout(
-        &"127.0.0.1:14168".parse().unwrap(),
-        Duration::from_millis(800),
-    ) else {
-        return;
-    };
-    let _ = stream.set_read_timeout(Some(Duration::from_millis(600)));
-    let _ = stream.set_write_timeout(Some(Duration::from_millis(600)));
-    let req = b"POST /services/stop-extras HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-    let _ = stream.write_all(req);
-    let _ = stream.read(&mut [0u8; 512]);
-}
-
-fn request_start_extras() {
-    use std::io::{Read, Write};
-    let Ok(mut stream) = TcpStream::connect_timeout(
-        &"127.0.0.1:14168".parse().unwrap(),
-        Duration::from_millis(800),
-    ) else {
-        return;
-    };
-    let _ = stream.set_read_timeout(Some(Duration::from_millis(600)));
-    let _ = stream.set_write_timeout(Some(Duration::from_millis(600)));
-    let req = b"POST /services/start-extras HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-    let _ = stream.write_all(req);
-    let _ = stream.read(&mut [0u8; 512]);
-}
-
-/// GET /services/identity from a running bridge; returns the ga_root it serves (or None
-/// when the endpoint is absent — i.e. an older/foreign bridge).
-fn bridge_reported_ga_root() -> Option<String> {
-    use std::io::{Read, Write};
-    let mut stream = TcpStream::connect_timeout(
-        &"127.0.0.1:14168".parse().unwrap(),
-        Duration::from_millis(800),
-    ).ok()?;
-    let _ = stream.set_read_timeout(Some(Duration::from_millis(800)));
-    let _ = stream.set_write_timeout(Some(Duration::from_millis(600)));
-    let req = b"GET /services/identity HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
-    stream.write_all(req).ok()?;
-    let mut buf = Vec::new();
-    let _ = stream.read_to_end(&mut buf);
-    let text = String::from_utf8_lossy(&buf);
-    let body = text.split("\r\n\r\n").nth(1)?;
-    let v: serde_json::Value = serde_json::from_str(body.trim()).ok()?;
-    v.get("ga_root")?.as_str().map(|s| s.to_string())
-}
-
-/// Normalize a path for comparison (canonicalize; fall back to the raw string).
-fn norm_path(p: &str) -> String {
-    std::fs::canonicalize(p)
-        .map(|c| c.to_string_lossy().to_string())
-        .unwrap_or_else(|_| p.to_string())
-}
-
-/// True when the bridge on 14168 belongs to the SAME install as this exe (safe to reuse).
-fn bridge_identity_matches(project_dir: &str) -> bool {
-    let Some(reported) = bridge_reported_ga_root() else { return false; };
-    let (a, b) = (norm_path(&reported), norm_path(project_dir));
-    #[cfg(windows)]
-    { a.eq_ignore_ascii_case(&b) }
-    #[cfg(not(windows))]
-    { a == b }
-}
-
-/// POST /services/shutdown to ask a running bridge to stop and free port 14168.
-fn request_bridge_shutdown() {
-    use std::io::{Read, Write};
-    let Ok(mut stream) = TcpStream::connect_timeout(
-        &"127.0.0.1:14168".parse().unwrap(),
-        Duration::from_millis(800),
-    ) else {
-        return;
-    };
-    let _ = stream.set_read_timeout(Some(Duration::from_millis(600)));
-    let _ = stream.set_write_timeout(Some(Duration::from_millis(600)));
-    let req = b"POST /services/shutdown HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-    let _ = stream.write_all(req);
-    let _ = stream.read(&mut [0u8; 512]);
-}
-
-/// If a bridge already holds 14168 but belongs to a DIFFERENT install (e.g. an orphaned
-/// bridge from a previously downloaded version, or this folder was moved), shut it down and
-/// wait for the port to free — otherwise the new exe would load the stale install's UI.
-fn takeover_stale_bridge(project_dir: &str) {
-    if project_dir.is_empty() || !is_bridge_running() {
-        return;
-    }
-    if bridge_identity_matches(project_dir) {
-        return; // same install -> reuse is correct
-    }
-    eprintln!("[tauri] a different/stale bridge holds 127.0.0.1:14168; taking over");
-    request_bridge_shutdown();
-    let start = Instant::now();
-    while is_bridge_running() && start.elapsed() < Duration::from_secs(10) {
-        thread::sleep(Duration::from_millis(200));
-    }
-}
-
 fn is_bridge_running() -> bool {
     TcpStream::connect(("127.0.0.1", 14168)).is_ok()
 }
@@ -528,50 +363,37 @@ fn wait_for_port(port: u16, timeout: Duration) -> bool {
     false
 }
 
-fn start_bridge() {
-    let script = find_bridge_script();
+fn spawn_bridge_process(python_path: &str, project_dir: &str) -> Result<(), String> {
+    if is_bridge_running() {
+        return Ok(());
+    }
+    let py = PathBuf::from(python_path);
+    let dir = PathBuf::from(project_dir);
+    let script = dir.join("frontends").join("desktop_bridge.py");
     if !script.exists() {
-        eprintln!("[tauri] bridge script not found: {:?}", script);
-        return;
+        return Err(format!("desktop_bridge.py not found at {:?}", script));
     }
 
-    let python = find_python();
-    eprintln!("[tauri] using python: {}", python);
-
-    let show_console = std::env::args().any(|a| a == "--console");
-
-    let mut cmd = Command::new(&python);
-    cmd.arg(&script)
-       .current_dir(script.parent().unwrap());
-
+    let mut cmd = Command::new(&py);
+    cmd.arg(&script).current_dir(&dir);
+    sanitize_bundle_env(&mut cmd);
     #[cfg(windows)]
-    if !show_console {
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
-
-    match cmd.spawn() {
-        Ok(child) => {
-            eprintln!("[tauri] started bridge PID={}", child.id());
-            *BRIDGE_PROCESS.lock().unwrap() = Some(child);
-        }
-        Err(e) => {
-            eprintln!("[tauri] failed to start bridge: {} (python={})", e, python);
-            return;
-        }
-    }
-
-    if !wait_for_port(14168, Duration::from_secs(15)) {
-        eprintln!("[tauri] WARNING: bridge did not become ready within 15s");
-    }
+    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    let child = cmd.spawn().map_err(|e| format!("Failed to spawn: {}", e))?;
+    *BRIDGE_PROCESS.lock().unwrap() = Some(child);
+    Ok(())
 }
 
-fn ensure_bridge_running() {
-    if is_bridge_running() {
-        eprintln!("[tauri] bridge already running on 127.0.0.1:14168; reusing it");
-        return;
+fn show_bridge_window(app_handle: &tauri::AppHandle) {
+    if let Some(main_win) = app_handle.get_webview_window("main") {
+        let url = tauri::Url::parse("http://127.0.0.1:14168/").unwrap();
+        let _ = main_win.navigate(url);
+        let _ = main_win.show();
+        let _ = main_win.set_focus();
     }
-    start_bridge();
+    if let Some(setup_win) = app_handle.get_webview_window("setup") {
+        let _ = setup_win.hide();
+    }
 }
 
 #[tauri::command]
@@ -582,40 +404,25 @@ fn start_bridge_with_config(app_handle: tauri::AppHandle, python_path: String, p
     std::fs::write(&path, serde_json::to_string_pretty(&obj).unwrap())
         .map_err(|e| format!("Failed to write settings: {}", e))?;
 
-    // Start bridge only if it is not already accepting connections.
-    if !is_bridge_running() {
-        let py = PathBuf::from(&python_path);
-        let dir = PathBuf::from(&project_dir);
-        let script = dir.join("frontends").join("desktop_bridge.py");
-        if !script.exists() {
-            return Err(format!("desktop_bridge.py not found at {:?}", script));
-        }
-
-        let mut cmd = Command::new(&py);
-        cmd.arg(&script).current_dir(&dir);
-        sanitize_bundle_env(&mut cmd);
-        #[cfg(windows)]
-        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-        let child = cmd.spawn().map_err(|e| format!("Failed to spawn: {}", e))?;
-        *BRIDGE_PROCESS.lock().unwrap() = Some(child);
-    }
+    spawn_bridge_process(&python_path, &project_dir)?;
 
     // Wait for port
     if !wait_for_port(14168, Duration::from_secs(20)) {
         return Err("Bridge did not become ready within 20s".into());
     }
 
-    // Navigate main window to bridge URL after the bridge is ready, then show it.
-    if let Some(main_win) = app_handle.get_webview_window("main") {
-        let url = tauri::Url::parse("http://127.0.0.1:14168/").unwrap();
-        let _ = main_win.navigate(url);
-        let _ = main_win.show();
-        let _ = main_win.set_focus();
-    }
-    if let Some(setup_win) = app_handle.get_webview_window("setup") {
-        let _ = setup_win.hide();
-    }
+    show_bridge_window(&app_handle);
+    Ok(())
+}
 
+#[tauri::command]
+fn start_bridge(app_handle: tauri::AppHandle) -> Result<(), String> {
+    let (python_path, project_dir) = get_or_discover_config();
+    spawn_bridge_process(&python_path, &project_dir)?;
+    if !wait_for_port(14168, Duration::from_secs(20)) {
+        return Err("Bridge did not become ready within 20s".into());
+    }
+    show_bridge_window(&app_handle);
     Ok(())
 }
 
@@ -630,16 +437,11 @@ pub fn run() {
     let no_autostart = args.iter().any(|a| a == "--no-autostart");
     let dev_mode = args.iter().any(|a| a == "--dev");
 
-    // Self-contained bundle: detect whether the first-run offline prepare is still needed.
     let project_dir = find_project_dir().unwrap_or_default();
-    let needs_prepare = needs_first_run_prepare(&project_dir);
-
-    // Take over a stale/foreign bridge holding port 14168 (orphaned bridge from a previously
-    // downloaded version, or a moved folder) before we decide to reuse it — otherwise the new
-    // exe would just load the old install's UI from that bridge.
-    takeover_stale_bridge(&project_dir);
-
     let bridge_ok = is_bridge_running();
+    // If any bridge is already present, attach to it immediately. Prepare is only needed before
+    // this app starts a bridge from its own bundled runtime.
+    let needs_prepare = !bridge_ok && needs_first_run_prepare(&project_dir);
     let mut spawned_bridge = false;
     // Skip the early spawn when a first-run prepare is required (no venv yet);
     // the setup thread prepares the env first and then starts the bridge.
@@ -669,7 +471,7 @@ pub fn run() {
                 let _ = w.set_focus();
             }
         }))
-        .invoke_handler(tauri::generate_handler![start_bridge_with_config, get_config])
+        .invoke_handler(tauri::generate_handler![start_bridge_with_config, start_bridge, get_config])
         .setup(move |app| {
             // Show the loading window immediately so the first-run prepare isn't a blank screen.
             // The window starts on loading.html (a local page), so no "connection refused" flash.
@@ -787,10 +589,8 @@ pub fn run() {
             if let tauri::WindowEvent::CloseRequested { .. } = event {
                 let label = window.label();
                 if label == "main" {
-                    // Model A (persistent backend): closing the window does NOT stop the
-                    // bridge or its conductor/scheduler, so IM bots / scheduled / in-flight
-                    // tasks keep running and a relaunch reuses the warm backend. Stale/foreign
-                    // bridges are handled on next start by takeover_stale_bridge.
+                    // Persistent backend: closing the window does NOT stop the bridge or its
+                    // services, so relaunching attaches to the warm backend on 14168.
                     window.app_handle().exit(0);
                 } else if label == "setup" {
                     // Setup closed -> exit if main is not visible

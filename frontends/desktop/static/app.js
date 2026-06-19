@@ -85,6 +85,13 @@ const gaServiceStore = {
     emit('service-state', msg);
   }
 
+  const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+  const tauriInvoke = (name, args = {}) => {
+    const invoke = window.__TAURI__?.core?.invoke;
+    if (!invoke) throw new Error('Tauri IPC is not available');
+    return invoke(name, args);
+  };
+
   async function http(path, options = {}) {
     const headers = Object.assign({}, options.headers || {});
     const init = Object.assign({}, options, { headers });
@@ -103,6 +110,23 @@ const gaServiceStore = {
       throw err;
     }
     return data;
+  }
+
+  async function waitBridgeStatus(timeoutMs = 20000) {
+    const deadline = Date.now() + timeoutMs;
+    let lastErr = null;
+    while (Date.now() < deadline) {
+      try {
+        const status = await http('/status');
+        wsRetries = 0;
+        connectWs();
+        return status;
+      } catch (err) {
+        lastErr = err;
+        await sleep(350);
+      }
+    }
+    throw lastErr || new Error('Bridge did not become ready');
   }
 
   function connectWs() {
@@ -187,6 +211,7 @@ const gaServiceStore = {
         return http(`/services/logs?id=${encodeURIComponent(id)}&tail=${encodeURIComponent(tail)}`);
       }
       case 'services/panel': return http('/services/panel');
+      case 'services/bridge/exit': return http('/services/bridge/exit', { method: 'POST' });
       case 'services/mykey/get': return http('/services/mykey');
       case 'services/mykey/save': return http('/services/mykey', { method: 'POST', body: params || {} });
       case 'app/path/selectGaRoot': return http('/config');
@@ -213,10 +238,30 @@ const gaServiceStore = {
     return res;
   }
 
+  async function startBridge() {
+    connectWs();
+    try {
+      return await http('/status');
+    } catch (_) {
+      await tauriInvoke('start_bridge');
+      return waitBridgeStatus();
+    }
+  }
+
+  async function exitBridge() {
+    const res = await rpc('services/bridge/exit');
+    cachedBridgeReady = null;
+    if (ws) {
+      try { ws.close(); } catch (_) {}
+    }
+    return res;
+  }
+
   window.ga = {
     platform: navigator.platform.toLowerCase().includes('mac') ? 'darwin' : 'win32',
-    startBridge: async () => { connectWs(); return http('/status'); },
+    startBridge,
     stopBridge: async () => ({ ok: true }),
+    exitBridge,
     checkStatus: () => rpc('app/status', {}),
     getConfig: () => rpc('app/config/get', {}),
     saveConfig: (cfg) => rpc('app/config/save', cfg || {}),
@@ -278,7 +323,7 @@ const I18N = {
     'customPreset.removeTitle': '删除',
     'customPreset.editTitle': '编辑',
     'builtinPreset.restoreBtn': '恢复默认预设',
-    'set.appearance': '外观', 'set.plainUi': '素色', 'set.fontSize': '聊天字号', 'set.lang': '语言', 'set.model': '模型', 'set.addModel': '添加模型',
+    'set.appearance': '外观', 'set.plainUi': '素色', 'set.fontSize': '聊天字号', 'set.lang': '语言', 'set.model': '模型', 'set.addModel': '添加模型', 'set.serviceManager': '后台服务管理',
     'appearance.light': '浅色', 'appearance.dark': '深色',
     'set.noModels': '暂无模型，点击下方添加',
     'lang.zh': '简体中文', 'lang.en': 'English',
@@ -389,9 +434,8 @@ const I18N = {
     'modal.channelLogs': '进程日志',
     'modal.mykeyConfig': 'mykey.py 配置',
     'sys.configSaved': '配置已保存',
-    'st.starting': '启动中…', 'st.stopping': '停止中…',
-    'st.online': '在线', 'st.offline': '离线', 'st.error': '错误', 'st.running': '运行', 'st.abnormal': '异常',
-    'act.configure': '配置', 'act.logs': '日志', 'act.restart': '重启', 'act.stop': '停止', 'act.start': '启动',
+    'st.starting': '启动中…', 'st.stopping': '停止中…', 'st.online': '在线', 'st.offline': '离线', 'st.error': '错误', 'st.running': '运行', 'st.abnormal': '异常',
+    'act.configure': '配置', 'act.logs': '日志', 'act.restart': '重启', 'act.stop': '停止', 'act.start': '启动', 'act.exit': '退出',
     'act.copy': '复制', 'act.copied': '已复制', 'act.copyTex': 'TeX', 'act.send': '发送',
     'proc.imbotWechat': 'imbot · 微信', 'proc.imbotDing': 'imbot · 钉钉', 'proc.scheduler': '定时任务调度', 'proc.conductor': '指挥家',
     'cm.scheduling': '调度中', 'cm.running': '执行中', 'cm.idleSt': '空闲',
@@ -442,7 +486,7 @@ const I18N = {
     'customPreset.removeTitle': 'Delete',
     'customPreset.editTitle': 'Edit',
     'builtinPreset.restoreBtn': 'Restore defaults',
-    'set.appearance': 'Appearance', 'set.plainUi': 'Plain', 'set.fontSize': 'Chat font size', 'set.lang': 'Language', 'set.model': 'Model', 'set.addModel': 'Add model',
+    'set.appearance': 'Appearance', 'set.plainUi': 'Plain', 'set.fontSize': 'Chat font size', 'set.lang': 'Language', 'set.model': 'Model', 'set.addModel': 'Add model', 'set.serviceManager': 'Service manager',
     'appearance.light': 'Light', 'appearance.dark': 'Dark',
     'set.noModels': 'No models yet — add one below',
     'lang.zh': '简体中文', 'lang.en': 'English',
@@ -553,9 +597,8 @@ const I18N = {
     'modal.channelLogs': 'Process logs',
     'modal.mykeyConfig': 'mykey.py',
     'sys.configSaved': 'Configuration saved',
-    'st.starting': 'Starting…', 'st.stopping': 'Stopping…',
-    'st.online': 'Online', 'st.offline': 'Offline', 'st.error': 'Error', 'st.running': 'Running', 'st.abnormal': 'Error',
-    'act.configure': 'Configure', 'act.logs': 'Logs', 'act.restart': 'Restart', 'act.stop': 'Stop', 'act.start': 'Start',
+    'st.starting': 'Starting…', 'st.stopping': 'Stopping…', 'st.online': 'Online', 'st.offline': 'Offline', 'st.error': 'Error', 'st.running': 'Running', 'st.abnormal': 'Error',
+    'act.configure': 'Configure', 'act.logs': 'Logs', 'act.restart': 'Restart', 'act.stop': 'Stop', 'act.start': 'Start', 'act.exit': 'Exit',
     'act.copy': 'Copy', 'act.copied': 'Copied', 'act.copyTex': 'TeX', 'act.send': 'Send',
     'proc.imbotWechat': 'imbot · WeChat', 'proc.imbotDing': 'imbot · DingTalk', 'proc.scheduler': 'Scheduler', 'proc.conductor': 'Conductor',
     'cm.scheduling': 'Scheduling', 'cm.running': 'Running', 'cm.idleSt': 'Idle',
@@ -847,11 +890,18 @@ const closeModals = () => document.querySelectorAll('.modal').forEach(m => {
   m.querySelectorAll('.field-limit-hint').forEach(h => h.style.display = 'none');
 });
 const bindClick = (id, fn) => { const el = document.getElementById(id); if (el) el.addEventListener('click', fn); };
+function openServiceManagerFromSettings() {
+  closeModals();
+  gaGoPage('services');
+  setSvcTab('status');
+  void loadStatusPanel();
+}
 bindClick('add-model-btn', (e) => {
   e.stopPropagation();
   openAddModelForm();
 });
 bindClick('settings-btn',  (e) => { e.stopPropagation(); openSettings(); });
+bindClick('settings-services-btn', (e) => { e.stopPropagation(); openServiceManagerFromSettings(); });
 // 侧边栏「快速接入」：点击官方模型按钮 → 打开预填好的添加模型表单
 const pqEl = document.getElementById('provider-quickstart');
 if (pqEl) pqEl.addEventListener('click', (e) => {
@@ -4981,10 +5031,49 @@ if (chanConfigSave) {
 
 /* ═══════════════ 状态面板（复用 ServiceManager + 启停/日志） ═══════════════ */
 const statusListEl = document.getElementById('status-list');
+const BRIDGE_SERVICE_ID = '__bridge__';
+const EXTRA_SERVICE_IDS = new Set(['frontends/conductor.py', 'reflect/scheduler.py']);
+
+function bridgeOfflinePanelServices() {
+  return [
+    {
+      id: BRIDGE_SERVICE_ID,
+      name: `bridge (:${BRIDGE_PORT})`,
+      status: 'offline',
+      running: false,
+      pid: null,
+      memMb: null,
+      cpuPct: null,
+      managed: false,
+    },
+    {
+      id: 'frontends/conductor.py',
+      name: 'frontends/conductor.py',
+      status: 'offline',
+      running: false,
+      pid: null,
+      memMb: null,
+      cpuPct: null,
+      managed: false,
+      bridgeOffline: true,
+    },
+    {
+      id: 'reflect/scheduler.py',
+      name: 'reflect/scheduler.py',
+      status: 'offline',
+      running: false,
+      pid: null,
+      memMb: null,
+      cpuPct: null,
+      managed: false,
+      bridgeOffline: true,
+    },
+  ];
+}
 
 function statusDisplayName(s) {
   if (!s) return '';
-  if (s.id === '__bridge__') return s.name || 'bridge';
+  if (s.id === BRIDGE_SERVICE_ID) return s.name || 'bridge';
   if (s.id === 'reflect/scheduler.py') return t('proc.scheduler');
   if (s.id === 'frontends/conductor.py') return t('proc.conductor');
   return channelDisplayName(s);
@@ -5006,10 +5095,26 @@ function renderStatusPanel(services) {
     const stClass = channelStatusClass(s.status || 'offline');
     const running = !!s.running;
     const managed = s.managed !== false;
-    let acts = `<button type="button" class="link-btn link sm" data-act="logs"></button>`;
-    if (managed) {
-      if (running) acts += `<button type="button" class="link-btn link sm" data-act="restart"></button>`;
-      acts += `<button type="button" class="sw-mini${running ? ' on' : ''}" data-act="toggle" aria-pressed="${running}"><i></i></button>`;
+    const isBridge = s.id === BRIDGE_SERVICE_ID;
+    const isExtra = EXTRA_SERVICE_IDS.has(s.id);
+    let acts = '';
+    if (isBridge) {
+      if (running) {
+        acts += `<button type="button" class="link-btn link sm" data-act="logs"></button>`;
+        acts += `<button type="button" class="link-btn link sm" data-act="bridge-exit"></button>`;
+      } else {
+        acts += `<button type="button" class="link-btn link sm" data-act="bridge-start"></button>`;
+      }
+    } else if (!s.bridgeOffline) {
+      acts += `<button type="button" class="link-btn link sm" data-act="logs"></button>`;
+      if (managed) {
+        if (running) acts += `<button type="button" class="link-btn link sm" data-act="restart"></button>`;
+        if (isExtra) {
+          acts += `<button type="button" class="link-btn link sm${running ? ' on' : ''}" data-act="toggle" aria-pressed="${running}"></button>`;
+        } else {
+          acts += `<button type="button" class="sw-mini${running ? ' on' : ''}" data-act="toggle" aria-pressed="${running}"><i></i></button>`;
+        }
+      }
     }
     row.innerHTML = `
       <b class="st-name"></b>
@@ -5026,14 +5131,24 @@ function renderStatusPanel(services) {
     if (logBtn) logBtn.textContent = t('act.logs');
     const rstBtn = row.querySelector('[data-act="restart"]');
     if (rstBtn) rstBtn.textContent = t('act.restart');
+    const startBridgeBtn = row.querySelector('[data-act="bridge-start"]');
+    if (startBridgeBtn) startBridgeBtn.textContent = t('act.start');
+    const exitBridgeBtn = row.querySelector('[data-act="bridge-exit"]');
+    if (exitBridgeBtn) exitBridgeBtn.textContent = t('act.exit');
+    const textToggleBtn = row.querySelector('.link-btn[data-act="toggle"]');
+    if (textToggleBtn) textToggleBtn.textContent = running ? t('act.exit') : t('act.start');
     statusListEl.appendChild(row);
   }
 }
 
 async function loadStatusPanel() {
   if (!statusListEl) return;
-  const res = await window.ga.getServicePanel();
-  renderStatusPanel(res.services || []);
+  try {
+    const res = await window.ga.getServicePanel();
+    renderStatusPanel(res.services || []);
+  } catch (_) {
+    renderStatusPanel(bridgeOfflinePanelServices());
+  }
 }
 
 async function restartService(id) {
@@ -5056,6 +5171,38 @@ if (statusListEl) {
     const act = actEl.dataset.act;
     if (act === 'logs') {
       openChannelLogs(id);
+      return;
+    }
+    if (act === 'bridge-start') {
+      if (_chanBusy) return;
+      _chanBusy = true;
+      actEl.disabled = true;
+      try {
+        await window.ga.startBridge();
+        await loadStatusPanel();
+        showChanToast(t('sys.channelStarted') + ' · bridge', '', 'ok');
+      } catch (err) {
+        showChanToast(t('err.channelStart') + ' · bridge', err.message || String(err), 'err');
+      } finally {
+        _chanBusy = false;
+        actEl.disabled = false;
+      }
+      return;
+    }
+    if (act === 'bridge-exit') {
+      if (_chanBusy) return;
+      _chanBusy = true;
+      actEl.disabled = true;
+      try {
+        await window.ga.exitBridge();
+        renderStatusPanel(bridgeOfflinePanelServices());
+        showChanToast(t('sys.channelStopped') + ' · bridge', '', 'ok');
+      } catch (err) {
+        showChanToast(t('err.channelStop') + ' · bridge', err.message || String(err), 'err');
+      } finally {
+        _chanBusy = false;
+        actEl.disabled = false;
+      }
       return;
     }
     if (act === 'restart') {

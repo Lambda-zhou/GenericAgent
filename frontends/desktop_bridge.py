@@ -27,6 +27,7 @@ HTTP API:
   POST   /services/mykey       body: {"content":"..."}
   POST   /services/stop-extras   stop conductor + scheduler (127.0.0.1 only)
   POST   /services/start-extras  start conductor + scheduler (127.0.0.1 only)
+  POST   /services/bridge/exit    stop managed services, then exit bridge (127.0.0.1 only)
 
 WS API (state sync):
   GET /ws -> on connect sends services.snapshot; service.changed on updates
@@ -919,10 +920,10 @@ class ServiceManager:
             self._notify(sid, err=err)
             return {"ok": False, "error": "not_configured", "service": self._state(sid, err=err)}
         self.buffers[sid] = deque(maxlen=500)
-        env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+        env = {**os.environ, "PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8"}
         kw: Dict[str, Any] = dict(
             cwd=str(self.ga_root), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, bufsize=1, env=env,
+            text=True, encoding="utf-8", errors="replace", bufsize=1, env=env,
         )
         if sys.platform == "win32":
             kw["creationflags"] = subprocess.CREATE_NO_WINDOW
@@ -1518,21 +1519,19 @@ async def start_extras_handler(request):
 
 
 async def identity_handler(request):
-    # Identifies which install this bridge belongs to. A newly launched app compares
-    # ga_root against its own; a mismatch means an orphaned bridge from a different
-    # (e.g. previously downloaded) version is holding the port, and the app will ask it
-    # to shut down via /services/shutdown and then start its own.
     return json_ok({"ga_root": str(DEFAULT_GA_ROOT), "app_dir": str(APP_DIR), "pid": os.getpid()})
 
 
-async def shutdown_handler(request):
-    if not _is_local_peer(request.remote or ""):
-        return json_ok({"ok": False, "error": "forbidden"}, status=403)
-    # Stop conductor/scheduler first (frees their ports too), then exit this bridge
-    # process right after the response flushes so the taking-over app can bind 14168.
+def _exit_bridge() -> None:
     with contextlib.suppress(Exception):
         services.stop_all_extras()
     threading.Timer(0.4, lambda: os._exit(0)).start()
+
+
+async def bridge_exit_handler(request):
+    if not _is_local_peer(request.remote or ""):
+        return json_ok({"ok": False, "error": "forbidden"}, status=403)
+    _exit_bridge()
     return json_ok({"ok": True})
 
 
@@ -1620,7 +1619,7 @@ def create_app():
     app.router.add_post("/services/stop-extras", stop_extras_handler)
     app.router.add_post("/services/start-extras", start_extras_handler)
     app.router.add_get("/services/identity", identity_handler)
-    app.router.add_post("/services/shutdown", shutdown_handler)
+    app.router.add_post("/services/bridge/exit", bridge_exit_handler)
 
     # Serve static frontend (desktop/static/)
     static_dir = APP_DIR / "desktop" / "static"

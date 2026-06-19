@@ -362,6 +362,7 @@ body{ background:var(--bg); color:var(--txt); font-size:13px; overflow:hidden; f
 .set-btn.primary{ background:var(--accent); color:var(--on-accent); border-color:var(--accent); }
 .set-btn.primary:hover{ filter:brightness(1.05); }
 .set-btn.ghost{ background:transparent; }
+.set-btn-follow{ margin-top:8px; }
 .model-form-body{ min-height:0; }
 .model-form{ padding:18px; display:flex; flex-direction:column; gap:12px; }
 .model-form label{ display:flex; flex-direction:column; gap:5px; font-size:12px; font-weight:500; color:var(--txt-2); }
