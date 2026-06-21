@@ -106,6 +106,21 @@ if (Test-Path -LiteralPath $settings) {
     Write-Info "no settings file found"
 }
 
+# ── 3b. WebView2 data dir (cache + localStorage) ─────────────────────────────
+# Tauri creates %LOCALAPPDATA%\com.genericagent.app\ (EBWebView: HTTP cache + localStorage)
+# outside the bundle, keyed by the app identifier. Only the Tauri desktop shell uses it (the
+# project's other frontends — qt/tui/conductor — do not), so removing it is safe. Other
+# GenericAgent bundles share the same identifier and would just rebuild it on next launch.
+Write-Step "Removing WebView2 data"
+$wv = Join-Path $env:LOCALAPPDATA 'com.genericagent.app'
+if (Test-Path -LiteralPath $wv) {
+    Remove-Item -LiteralPath $wv -Recurse -Force -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $wv) { Write-Info "WebView2 data partially locked; some files remain" }
+    else { Write-Ok "removed $wv" }
+} else {
+    Write-Info "no WebView2 data found"
+}
+
 # ── 4. Schedule deletion of the bundle folder ────────────────────────────────
 # The folder cannot remove itself while this script (and the uninstall.bat that
 # launched it) run from inside it. Spawn a detached cmd that waits for our process
