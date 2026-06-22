@@ -41,11 +41,17 @@ fn bundle_anchor_dir() -> Option<PathBuf> {
     {
         // current_exe() inside a bundle is:
         //   <package>/GenericAgent.app/Contents/MacOS/GenericAgent
-        // The portable runtime sits next to the .app:
+        // Prefer the standard macOS layout where runtime is embedded in the app:
+        //   GenericAgent.app/Contents/Resources/runtime/app/agentmain.py
+        // Fall back to the old portable layout for compatibility:
         //   <package>/runtime/app/agentmain.py
         let mut d = exe.parent();
         while let Some(dir) = d {
             if dir.extension().and_then(|s| s.to_str()) == Some("app") {
+                let resources = dir.join("Contents").join("Resources");
+                if resources.join("runtime").join("app").join("agentmain.py").exists() {
+                    return Some(resources);
+                }
                 if let Some(parent) = dir.parent() {
                     return Some(parent.to_path_buf());
                 }

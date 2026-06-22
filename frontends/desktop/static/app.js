@@ -1050,7 +1050,7 @@ document.querySelectorAll('.modal').forEach(m =>
   }));
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModals(); });
 
-function showConfirmDialog({ title, message, okText } = {}) {
+function showConfirmDialog({ title, message, okText, okKind = 'primary', cancelText } = {}) {
   const modal = document.getElementById('confirm-modal');
   if (!modal) return Promise.resolve(false);
   const titleEl = document.getElementById('confirm-title');
@@ -1059,7 +1059,12 @@ function showConfirmDialog({ title, message, okText } = {}) {
   const cancelBtn = document.getElementById('confirm-cancel');
   if (titleEl) titleEl.textContent = title || t('common.confirm');
   if (msgEl) msgEl.textContent = message || '';
-  if (okBtn) okBtn.textContent = okText || t('common.confirm');
+  if (cancelBtn) cancelBtn.textContent = cancelText || t('common.cancel');
+  if (okBtn) {
+    okBtn.textContent = okText || t('common.confirm');
+    okBtn.classList.toggle('danger', okKind === 'danger');
+    okBtn.classList.toggle('primary', okKind !== 'danger');
+  }
   modal.hidden = false;
   return new Promise(resolve => {
     let done = false;
@@ -3708,7 +3713,7 @@ async function openEditModelForm(id) {
 }
 async function deleteModel(id, name) {
   const label = profileLabel(name) || name || ('#' + id);
-  if (!(await showConfirmDialog({ title: t('common.delete'), message: `${t('confirm.modelDelete')}\n${label}`, okText: t('common.delete') }))) return;
+  if (!(await showConfirmDialog({ title: t('common.delete'), message: `${t('confirm.modelDelete')}\n${label}`, okText: t('common.delete'), okKind: 'danger' }))) return;
   try {
     const res = await bridgeFetch(`/model-profiles/${id}`, { method: 'DELETE', body: {} });
     if (res?.ok === false || res?.error) throw new Error(res.error || t('err.modelDelete'));

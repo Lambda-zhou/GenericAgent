@@ -69,6 +69,8 @@
   --danger-text:#d3514f;
   --danger-bg:#fdeceb;
   --danger-ring:#e23b3b38;
+  --confirm-primary-bg:#1a1a1a;
+  --confirm-primary-fg:#ffffff;
   --success:var(--ok-strong);
   --success-bg:var(--ok-bg);
   --success-ring:var(--ok-ring);
@@ -159,6 +161,8 @@ html[data-appearance="dark"]{
   --danger-text:#ff7b72;
   --danger-bg:#2d1515;
   --danger-ring:#f8514938;
+  --confirm-primary-bg:#e6edf3;
+  --confirm-primary-fg:#161b22;
   --overlay:#010409a6;
   --shadow:0 1px 2px #01040966, 0 8px 24px #01040966;
   --shadow-pop:0 8px 24px #01040999;
@@ -404,7 +408,7 @@ body{ background:var(--bg); color:var(--txt); font-size:13px; overflow:hidden; f
 }
 .set-btn svg{ width:15px; height:15px; flex:0 0 auto; color:var(--accent); }
 .set-btn:hover{ background:var(--line-soft); border-color:var(--line-strong); }
-.set-btn.primary{ background:var(--accent); color:var(--on-accent); border-color:var(--accent); }
+.set-btn.primary{ background:var(--confirm-primary-bg); color:var(--confirm-primary-fg); border-color:var(--confirm-primary-bg); }
 .set-btn.primary:hover{ filter:brightness(1.05); }
 .set-btn.danger{ background:var(--danger-bg); color:var(--danger-text); border-color:var(--danger-ring); }
 .set-btn.danger:hover{ background:var(--danger-bg); border-color:var(--danger-text); }

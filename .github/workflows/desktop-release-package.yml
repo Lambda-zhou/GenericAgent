@@ -202,7 +202,7 @@ jobs:
           ## 产物 / Downloads
           - Windows: `GenericAgent-Desktop-Windows-Portable.zip` — 双击 / double-click `GenericAgent.exe`
           - Linux: `GenericAgent-Desktop-Linux-Portable.tar.gz` — `chmod +x GenericAgent.AppImage && ./GenericAgent.AppImage`
-          - macOS: `GenericAgent-Desktop-macOS-Portable.dmg`（或 zip）— 双击 / double-click `Start GenericAgent.command`
+          - macOS: `GenericAgent-Desktop-macOS.dmg`（标准安装）或 `GenericAgent-Desktop-macOS-Portable.zip`（便携版）
 
           ## 首次启动 / First launch
           首次启动会自动离线准备运行环境（装依赖），有进度条，完成后进入主界面；之后秒进。
@@ -411,7 +411,7 @@ jobs:
           ## 产物 / Downloads
           - Windows: `GenericAgent-Desktop-Windows-Portable.zip` — 双击 / double-click `GenericAgent.exe`
           - Linux: `GenericAgent-Desktop-Linux-Portable.tar.gz` — `chmod +x GenericAgent.AppImage && ./GenericAgent.AppImage`
-          - macOS: `GenericAgent-Desktop-macOS-Portable.dmg`（或 zip）— 双击 / double-click `Start GenericAgent.command`
+          - macOS: `GenericAgent-Desktop-macOS.dmg`（标准安装）或 `GenericAgent-Desktop-macOS-Portable.zip`（便携版）
 
           ## 首次启动 / First launch
           首次启动会自动离线准备运行环境（装依赖），有进度条，完成后进入主界面；之后秒进。
@@ -462,29 +462,22 @@ jobs:
         working-directory: frontends/desktop
         run: npm run tauri build -- --bundles app
 
-      - name: Assemble self-contained portable bundle
+      - name: Assemble self-contained portable bundle and DMG app
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          PKG="artifacts/macos/GenericAgent-Desktop-macOS-Portable"
-          RUNTIME="$PKG/runtime"
-          mkdir -p "$PKG" "$RUNTIME"
-
           APP_SRC="$(find frontends/desktop/src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' -type d | head -n 1)"
           [[ -n "$APP_SRC" ]] || { echo "No .app found" >&2; exit 1; }
-          # ditto (not cp -R) preserves symlinks/resource forks and the ad-hoc code
-          # signature; a broken signature is what makes Apple Silicon report "damaged".
-          ditto "$APP_SRC" "$PKG/GenericAgent.app"
-          codesign --force --deep --sign - "$PKG/GenericAgent.app"
-          codesign --verify --deep --strict "$PKG/GenericAgent.app" || true
 
-          cp desktop_release/scripts/macos/install_macos.sh "$RUNTIME/install_macos.sh"
-          chmod +x "$RUNTIME/install_macos.sh"
-          # Uninstaller: double-clickable .command next to the .app.
-          cp desktop_release/scripts/macos/uninstall.command "$PKG/uninstall.command"
-          chmod +x "$PKG/uninstall.command"
+          # Build one runtime/ tree, then reuse it for both macOS deliverables:
+          # 1) Portable zip: GenericAgent.app + runtime/ + helper scripts.
+          # 2) Standard DMG: GenericAgent.app with runtime embedded in Contents/Resources/runtime.
+          RUNTIME_SRC="artifacts/macos/runtime-src"
+          mkdir -p "$RUNTIME_SRC"
+          cp desktop_release/scripts/macos/install_macos.sh "$RUNTIME_SRC/install_macos.sh"
+          chmod +x "$RUNTIME_SRC/install_macos.sh"
 
           # Embedded Python (python-build-standalone, macOS, 3.12 install_only; aarch64 preferred).
           PBS_URL="$(python3 - <<'PY'
@@ -506,18 +499,18 @@ jobs:
           )"
           echo "Python build-standalone: $PBS_URL"
           curl -L --fail --retry 3 -o /tmp/pbs-macos.tar.gz "$PBS_URL"
-          tar -xzf /tmp/pbs-macos.tar.gz -C "$RUNTIME"   # extracts a 'python/' dir
-          PY="$RUNTIME/python/bin/python3"
+          tar -xzf /tmp/pbs-macos.tar.gz -C "$RUNTIME_SRC"   # extracts a 'python/' dir
+          PY="$RUNTIME_SRC/python/bin/python3"
           "$PY" --version
 
           # Offline wheels
-          mkdir -p "$RUNTIME/wheels"
-          "$PY" -m pip download --dest "$RUNTIME/wheels" \
+          mkdir -p "$RUNTIME_SRC/wheels"
+          "$PY" -m pip download --dest "$RUNTIME_SRC/wheels" \
             "requests>=2.28" "beautifulsoup4>=4.12" "bottle>=0.12" "simple-websocket-server>=0.4" "aiohttp>=3.9" psutil \
             fastapi uvicorn websockets pydantic setuptools wheel
 
           # Runtime source (project root minus heavy/dev/build dirs) — bsdtar exclude syntax.
-          mkdir -p "$RUNTIME/app"
+          mkdir -p "$RUNTIME_SRC/app"
           tar \
             --exclude='.git' --exclude='.github' \
             --exclude='frontends/desktop/src-tauri' \
@@ -529,74 +522,68 @@ jobs:
             --exclude='*/node_modules' --exclude='*/target' \
             --exclude='*/.venv' --exclude='.venv' \
             --exclude='*/__pycache__' --exclude='*.pyc' \
-            -cf - . | tar -xf - -C "$RUNTIME/app"
-          test -f "$RUNTIME/app/agentmain.py"
-          test -f "$RUNTIME/app/frontends/desktop_bridge.py"
-          test -f "$RUNTIME/app/frontends/desktop/static/index.html"
+            -cf - . | tar -xf - -C "$RUNTIME_SRC/app"
+          test -f "$RUNTIME_SRC/app/agentmain.py"
+          test -f "$RUNTIME_SRC/app/frontends/desktop_bridge.py"
+          test -f "$RUNTIME_SRC/app/frontends/desktop/static/index.html"
 
-          # One-click launcher: strips the com.apple.quarantine attribute the OS adds to
-          # downloaded files, then opens the app (sidesteps the "damaged" Gatekeeper error).
-          cat > "$PKG/Start GenericAgent.command" <<'EOF'
+          PORTABLE="artifacts/macos/GenericAgent-Desktop-macOS-Portable"
+          DMG_STAGE="artifacts/macos/dmg-stage"
+          DMG_APP="$DMG_STAGE/GenericAgent.app"
+          mkdir -p "$PORTABLE" "$DMG_STAGE"
+
+          # Portable zip: keep the existing release shape and helper scripts.
+          ditto "$APP_SRC" "$PORTABLE/GenericAgent.app"
+          ditto "$RUNTIME_SRC" "$PORTABLE/runtime"
+          cp desktop_release/scripts/macos/uninstall.command "$PORTABLE/uninstall.command"
+          chmod +x "$PORTABLE/uninstall.command"
+          cat > "$PORTABLE/Start GenericAgent.command" <<'EOF'
           #!/bin/bash
           DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
           xattr -cr "$DIR/GenericAgent.app" 2>/dev/null || true
           open "$DIR/GenericAgent.app"
           EOF
-          chmod +x "$PKG/Start GenericAgent.command"
+          chmod +x "$PORTABLE/Start GenericAgent.command"
 
-          cat > "$PKG/安装使用说明_Install_Guide.txt" <<'EOF'
+          cat > "$PORTABLE/安装使用说明_Install_Guide.txt" <<'EOF'
           ================ 中文 ================
           GenericAgent Desktop — macOS 便携版（自包含）
 
           无需安装 Python、无需联网装依赖、无需源码仓库——全部已内置。
 
-          前置条件
-          - macOS（Apple Silicon 或 Intel）
-
           使用
-          推荐：双击 “Start GenericAgent.command” 启动——它会自动清除 macOS 下载隔离标记
-          （com.apple.quarantine）后打开 app，避免“GenericAgent.app 已损坏”提示。
+          推荐：双击 “Start GenericAgent.command” 启动。也可直接双击 GenericAgent.app。
+          请保持目录结构不变：GenericAgent.app 与 runtime/ 必须在同一目录下。
 
-          也可直接双击 GenericAgent.app。若系统提示已损坏或来自未知开发者：
-          - 右键 GenericAgent.app -> 打开，或在 系统设置 -> 隐私与安全性 中允许；
-          - 或在终端执行：xattr -cr /path/to/GenericAgent.app
-
-          首次启动会自动离线准备运行环境（建虚拟环境、装依赖），完成后进入主界面；之后秒进。
-
-          说明
-          - 想真正对话，仍需在程序里配置模型 / API Key。
-          - 请保持目录结构不变：GenericAgent.app 与 runtime/ 必须在同一目录下。
-          - runtime/ 是内置运行环境与源码，正常使用无需改动。
+          卸载
+          双击 uninstall.command，或退出程序后删除整个便携文件夹。
 
           ================ English ================
           GenericAgent Desktop — macOS Portable (self-contained)
 
           No Python install, no internet for dependencies, no source checkout — everything is bundled.
 
-          Requirements
-          - macOS (Apple Silicon or Intel)
-
           Usage
-          Recommended: double-click "Start GenericAgent.command". It clears the macOS download
-          quarantine attribute (com.apple.quarantine) and then opens the app, avoiding the
-          "GenericAgent.app is damaged" prompt.
+          Recommended: double-click "Start GenericAgent.command". You can also double-click GenericAgent.app.
+          Keep the folder layout intact: GenericAgent.app and runtime/ must stay in the same directory.
 
-          You can also double-click GenericAgent.app directly. If macOS says it is damaged or from
-          an unidentified developer:
-          - Right-click GenericAgent.app -> Open, or allow it in System Settings -> Privacy & Security;
-          - Or run in Terminal: xattr -cr /path/to/GenericAgent.app
-
-          The first launch prepares the runtime offline (creates a venv, installs deps), then opens
-          the main window; subsequent launches start instantly.
-
-          Notes
-          - To actually chat, configure a model / API key inside the app.
-          - Keep the folder layout intact: GenericAgent.app and runtime/ must stay in the same directory.
-          - runtime/ holds the bundled runtime and source; no need to touch it.
+          Uninstall
+          Double-click uninstall.command, or quit the app and delete the whole portable folder.
           EOF
-          sed -i '' 's/^          //' "$PKG/安装使用说明_Install_Guide.txt"
+          sed -i '' 's/^          //' "$PORTABLE/安装使用说明_Install_Guide.txt"
 
-          ( cd "$PKG" && \
+          codesign --force --deep --sign - "$PORTABLE/GenericAgent.app"
+          codesign --verify --deep --strict "$PORTABLE/GenericAgent.app" || true
+
+          # Standard DMG: only GenericAgent.app + Applications alias. Runtime is embedded.
+          ditto "$APP_SRC" "$DMG_APP"
+          mkdir -p "$DMG_APP/Contents/Resources"
+          ditto "$RUNTIME_SRC" "$DMG_APP/Contents/Resources/runtime"
+          codesign --force --deep --sign - "$DMG_APP"
+          codesign --verify --deep --strict "$DMG_APP" || true
+          ln -s /Applications "$DMG_STAGE/Applications"
+
+          ( cd "$PORTABLE" && \
             shasum -a 256 "安装使用说明_Install_Guide.txt" "Start GenericAgent.command" > SHA256SUMS-macos.txt && \
             find GenericAgent.app runtime -type f -print0 | sort -z | xargs -0 shasum -a 256 >> SHA256SUMS-macos.txt )
 
@@ -604,16 +591,18 @@ jobs:
           ( cd artifacts/macos && zip -qry out/GenericAgent-Desktop-macOS-Portable.zip GenericAgent-Desktop-macOS-Portable )
           hdiutil create \
             -volname "GenericAgent Desktop" \
-            -srcfolder "$PKG" \
+            -srcfolder "$DMG_STAGE" \
             -ov \
             -format UDZO \
-            "artifacts/macos/out/GenericAgent-Desktop-macOS-Portable.dmg"
-          shasum -a 256 "artifacts/macos/out/GenericAgent-Desktop-macOS-Portable.dmg" \
-            > "artifacts/macos/out/GenericAgent-Desktop-macOS-Portable.dmg.sha256"
-          cp "$PKG/SHA256SUMS-macos.txt" artifacts/macos/out/SHA256SUMS-macos.txt
+            "artifacts/macos/out/GenericAgent-Desktop-macOS.dmg"
+          shasum -a 256 "artifacts/macos/out/GenericAgent-Desktop-macOS.dmg" \
+            > "artifacts/macos/out/GenericAgent-Desktop-macOS.dmg.sha256"
+          cp "$PORTABLE/SHA256SUMS-macos.txt" artifacts/macos/out/SHA256SUMS-macos.txt
 
-          echo "Package tree (top levels):"
-          find "$PKG" -maxdepth 2 -print | sort | head -60
+          echo "Portable package tree (top levels):"
+          find "$PORTABLE" -maxdepth 2 -print | sort | head -60
+          echo "DMG stage tree:"
+          find "$DMG_STAGE" -maxdepth 2 -print | sort
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
@@ -640,7 +629,7 @@ jobs:
           ## 产物 / Downloads
           - Windows: `GenericAgent-Desktop-Windows-Portable.zip` — 双击 / double-click `GenericAgent.exe`
           - Linux: `GenericAgent-Desktop-Linux-Portable.tar.gz` — `chmod +x GenericAgent.AppImage && ./GenericAgent.AppImage`
-          - macOS: `GenericAgent-Desktop-macOS-Portable.dmg`（或 zip）— 双击 / double-click `Start GenericAgent.command`
+          - macOS: `GenericAgent-Desktop-macOS.dmg`（标准安装）或 `GenericAgent-Desktop-macOS-Portable.zip`（便携版）
 
           ## 首次启动 / First launch
           首次启动会自动离线准备运行环境（装依赖），有进度条，完成后进入主界面；之后秒进。
