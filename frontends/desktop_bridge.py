@@ -188,6 +188,49 @@ class AgentManager:
         except Exception as e:
             print(f"[bridge] load sessions failed: {e}", file=sys.stderr)
 
+    def import_sessions(self, source_dir: str) -> dict:
+        """把 source_dir/temp/desktop_sessions.json 合并进当前会话列表(按 id 去重)。
+
+        既更新内存(立即在侧边栏可见)又落盘。返回新增/跳过计数。
+        """
+        src = Path(source_dir).expanduser().resolve()
+        src_file = src / "temp" / "desktop_sessions.json"
+        if not src_file.is_file():
+            return {"sessionsAdded": 0, "sessionsSkipped": 0, "sessionsFileFound": False}
+        try:
+            arr = json.loads(src_file.read_text(encoding="utf-8"))
+            if not isinstance(arr, list):
+                raise ValueError("desktop_sessions.json is not a list")
+        except Exception as e:
+            raise ValueError(f"cannot read desktop_sessions.json: {e}")
+        added = 0
+        skipped = 0
+        with self.lock:
+            for item in arr:
+                sid = item.get("id")
+                if not sid or sid in self.sessions:
+                    skipped += 1
+                    continue
+                msgs = item.get("messages", [])
+                sess = Session(id=sid, title=item.get("title", "New chat"),
+                               cwd=item.get("cwd", self.ga_root),
+                               created_at=item.get("created_at", time.time()),
+                               updated_at=item.get("updated_at", time.time()),
+                               messages=msgs,
+                               msg_seq=item.get("msg_seq", 0),
+                               pinned=item.get("pinned", False),
+                               untitled=item.get("untitled", True),
+                               plan_scan_baseline=_load_plan_baseline(item, msgs),
+                               plan_path=_sanitize_desktop_plan_path(sid, item.get("plan_path") or ""),
+                               status="idle", agent=None,
+                               llm_history=item.get("llm_history"),
+                               llm_no=item.get("llm_no"))
+                self.sessions[sid] = sess
+                added += 1
+        if added:
+            self._persist()
+        return {"sessionsAdded": added, "sessionsSkipped": skipped, "sessionsFileFound": True}
+
     def _mykey_file(self) -> Path:
         p = Path(self.ga_root) / "mykey.py"
         if not p.exists():
@@ -1812,6 +1855,7 @@ async def memory_import_handler(request):
         return json_ok({"ok": False, "error": "missing_sourceDir"}, status=400)
     try:
         result = _import_memory_from(source_dir, manager.ga_root)
+        result.update(manager.import_sessions(source_dir))
     except Exception as e:
         return json_ok({"ok": False, "error": str(e)}, status=400)
     return json_ok(result)

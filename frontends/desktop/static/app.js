@@ -461,6 +461,7 @@ const I18N = {
     'sys.memoryImported': '记忆已导入',
     'err.memoryImport': '导入记忆失败',
     'sys.memoryImportBackup': '原记忆已备份至',
+    'sys.memorySessions': '会话',
     'sys.memoryPickTitle': '选择 GenericAgent 根目录（包含 memory 与 temp 的目录）',
     'sys.memoryImportPrompt': '请输入 GenericAgent 根目录的完整路径（包含 memory 与 temp 的目录，而非 memory 文件夹本身）：',
     'sys.mykeyExported': '模型配置已导出',
@@ -639,6 +640,7 @@ const I18N = {
     'sys.memoryImported': 'Memory imported',
     'err.memoryImport': 'Failed to import memory',
     'sys.memoryImportBackup': 'Previous memory backed up to',
+    'sys.memorySessions': 'sessions',
     'sys.memoryPickTitle': 'Select the GenericAgent root directory (the folder containing memory and temp)',
     'sys.memoryImportPrompt': 'Enter the full path of the GenericAgent root directory (the folder containing memory and temp, not the memory folder itself):',
     'sys.mykeyExported': 'Model config exported',
@@ -1030,7 +1032,11 @@ async function importMemoryFromDir() {
   if (!res || res.ok === false) throw new Error((res && res.error) || 'import failed');
   const detail = `memory: ${res.memoryCopied}, model_responses: ${res.responsesCopied}`
     + (res.responsesSkipped ? ` (skip ${res.responsesSkipped})` : '')
+    + `, ${t('sys.memorySessions')}: ${res.sessionsAdded || 0}`
     + (res.backupDir ? `\n${t('sys.memoryImportBackup')}: ${res.backupDir}` : '');
+  if (res.sessionsAdded) {
+    try { await loadSessions(); } catch (_) {}
+  }
   showChanToast(t('sys.memoryImported'), detail, 'ok');
 }
 bindClick('import-memory-btn', async (e) => {
