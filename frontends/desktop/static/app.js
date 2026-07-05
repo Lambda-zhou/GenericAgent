@@ -216,6 +216,7 @@ let bridgeUiOffline = false;
       case 'services/bridge/exit': return http('/services/bridge/exit', { method: 'POST' });
       case 'services/mykey/get': return http('/services/mykey');
       case 'services/mykey/save': return http('/services/mykey', { method: 'POST', body: params || {} });
+      case 'memory/import': return http('/memory/import', { method: 'POST', body: params || {} });
       case 'services/conductor/model/get': return http('/services/conductor/model');
       case 'services/conductor/model/save': return http('/services/conductor/model', { method: 'POST', body: params || {} });
       case 'app/path/selectGaRoot': return http('/config');
@@ -284,6 +285,7 @@ let bridgeUiOffline = false;
     getServicePanel: () => rpc('services/panel', {}),
     getMykeyContent: () => rpc('services/mykey/get', {}),
     saveMykeyContent: (content) => rpc('services/mykey/save', { content }),
+    importMemory: (sourceDir) => rpc('memory/import', { sourceDir }),
     getConductorModel: () => rpc('services/conductor/model/get', {}),
     saveConductorModel: (llmNo) => rpc('services/conductor/model/save', { llmNo }),
     tauriInvoke,
@@ -336,7 +338,7 @@ const I18N = {
     'customPreset.removeTitle': '删除',
     'customPreset.editTitle': '编辑',
     'builtinPreset.restoreBtn': '恢复默认预设',
-    'set.appearance': '外观', 'set.plainUi': '素色', 'set.fontSize': '聊天字号', 'set.lang': '语言', 'set.model': '模型', 'set.addModel': '添加模型', 'set.features': '功能', 'set.importMykey': '导入已有模型配置（mykey.py）', 'set.exportMykey': '导出当前模型配置', 'set.serviceManager': '后台服务管理',
+    'set.appearance': '外观', 'set.plainUi': '素色', 'set.fontSize': '聊天字号', 'set.lang': '语言', 'set.model': '模型', 'set.addModel': '添加模型', 'set.features': '功能', 'set.importMykey': '导入已有模型配置（mykey.py）', 'set.exportMykey': '导出当前模型配置', 'set.importMemory': '导入已有记忆与会话记录', 'set.serviceManager': '后台服务管理',
     'shortcut.askConfirm': '是否在桌面创建 GenericAgent 快捷方式？',
     'appearance.light': '浅色', 'appearance.dark': '深色',
     'set.noModels': '暂无模型，点击下方添加',
@@ -456,6 +458,10 @@ const I18N = {
     'modal.mykeyConfig': 'mykey.py 配置',
     'sys.configSaved': '配置已保存',
     'sys.mykeyImported': '模型配置已导入',
+    'sys.memoryImported': '记忆已导入',
+    'err.memoryImport': '导入记忆失败',
+    'sys.memoryImportBackup': '原记忆已备份至',
+    'sys.memoryImportPrompt': '请输入要导入的 GenericAgent 目录的完整路径：',
     'sys.mykeyExported': '模型配置已导出',
     'st.starting': '启动中…', 'st.stopping': '停止中…', 'st.online': '在线', 'st.offline': '离线', 'st.error': '错误', 'st.running': '运行', 'st.abnormal': '异常',
     'act.configure': '配置', 'act.logs': '日志', 'act.restart': '重启', 'act.stop': '停止', 'act.start': '启动', 'act.exit': '退出',
@@ -509,7 +515,7 @@ const I18N = {
     'customPreset.removeTitle': 'Delete',
     'customPreset.editTitle': 'Edit',
     'builtinPreset.restoreBtn': 'Restore defaults',
-    'set.appearance': 'Appearance', 'set.plainUi': 'Plain', 'set.fontSize': 'Chat font size', 'set.lang': 'Language', 'set.model': 'Model', 'set.addModel': 'Add model', 'set.features': 'Features', 'set.importMykey': 'Import model config (mykey.py)', 'set.exportMykey': 'Export current model config', 'set.serviceManager': 'Service manager',
+    'set.appearance': 'Appearance', 'set.plainUi': 'Plain', 'set.fontSize': 'Chat font size', 'set.lang': 'Language', 'set.model': 'Model', 'set.addModel': 'Add model', 'set.features': 'Features', 'set.importMykey': 'Import model config (mykey.py)', 'set.exportMykey': 'Export current model config', 'set.importMemory': 'Import existing memory & sessions', 'set.serviceManager': 'Service manager',
     'shortcut.askConfirm': 'Create a desktop shortcut for GenericAgent?',
     'appearance.light': 'Light', 'appearance.dark': 'Dark',
     'set.noModels': 'No models yet — add one below',
@@ -629,6 +635,10 @@ const I18N = {
     'modal.mykeyConfig': 'mykey.py',
     'sys.configSaved': 'Configuration saved',
     'sys.mykeyImported': 'Model config imported',
+    'sys.memoryImported': 'Memory imported',
+    'err.memoryImport': 'Failed to import memory',
+    'sys.memoryImportBackup': 'Previous memory backed up to',
+    'sys.memoryImportPrompt': 'Enter the full path of the GenericAgent directory to import from:',
     'sys.mykeyExported': 'Model config exported',
     'st.starting': 'Starting…', 'st.stopping': 'Stopping…', 'st.online': 'Online', 'st.offline': 'Offline', 'st.error': 'Error', 'st.running': 'Running', 'st.abnormal': 'Error',
     'act.configure': 'Configure', 'act.logs': 'Logs', 'act.restart': 'Restart', 'act.stop': 'Stop', 'act.start': 'Start', 'act.exit': 'Exit',
@@ -1004,6 +1014,29 @@ bindClick('export-mykey-btn', async (e) => {
   } catch (err) {
     if (err && (err.name === 'AbortError' || err.code === 20)) return;
     showChanToast(t('err.mykeyExport'), err.message || String(err), 'err');
+  }
+});
+async function importMemoryFromDir() {
+  let sourceDir = '';
+  if (window.__TAURI__?.core?.invoke) {
+    sourceDir = await window.ga.tauriInvoke('pick_directory');
+  } else {
+    sourceDir = window.prompt(t('sys.memoryImportPrompt')) || '';
+  }
+  if (!sourceDir) return;
+  const res = await window.ga.importMemory(sourceDir);
+  if (!res || res.ok === false) throw new Error((res && res.error) || 'import failed');
+  const detail = `memory: ${res.memoryCopied}, model_responses: ${res.responsesCopied}`
+    + (res.responsesSkipped ? ` (skip ${res.responsesSkipped})` : '')
+    + (res.backupDir ? `\n${t('sys.memoryImportBackup')}: ${res.backupDir}` : '');
+  showChanToast(t('sys.memoryImported'), detail, 'ok');
+}
+bindClick('import-memory-btn', async (e) => {
+  e.stopPropagation();
+  try {
+    await importMemoryFromDir();
+  } catch (err) {
+    showChanToast(t('err.memoryImport'), err.message || String(err), 'err');
   }
 });
 // 侧边栏「快速接入」：点击官方模型按钮 → 打开预填好的添加模型表单
